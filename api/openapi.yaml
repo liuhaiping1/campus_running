@@ -1,0 +1,2141 @@
+openapi: 3.0.3
+info:
+  title: Campus Errand Service Platform API
+  version: 1.0.0
+  description: |
+    OpenAPI specification generated from campus_errand_requirements_dev_doc_v5_final_aligned.docx.
+    The API uses a unified response envelope with code, message, and data.
+servers:
+  - url: http://localhost:8080
+    description: Local development server
+security:
+  - bearerAuth: []
+tags:
+  - name: Auth
+    description: Authentication and account APIs
+  - name: RunnerAuth
+    description: Runner certification APIs
+  - name: Address
+    description: User address APIs
+  - name: Order
+    description: Order creation, hall, acceptance, fulfillment and cancellation APIs
+  - name: Pay
+    description: Payment and sandbox payment APIs
+  - name: Evaluation
+    description: Order evaluation APIs
+  - name: Message
+    description: Station message APIs
+  - name: Admin
+    description: Admin review, refund and operation APIs
+  - name: System
+    description: Dictionary and notice APIs
+
+paths:
+  /api/auth/register:
+    post:
+      tags: [Auth]
+      summary: Register a new student account
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterRequest'
+      responses:
+        '200':
+          description: Registered successfully
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/RegisterResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /api/auth/login:
+    post:
+      tags: [Auth]
+      summary: Login with username and password
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: Logged in successfully
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/LoginResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '423':
+          description: Account disabled or temporarily locked
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+
+  /api/runner-auth/apply:
+    post:
+      tags: [RunnerAuth]
+      summary: Submit runner certification application
+      description: |
+        STUDENT submits a new runner certification batch. The service should update old current_flag=1 records
+        to current_flag=0 and insert the new batch in the same transaction.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RunnerAuthApplyRequest'
+      responses:
+        '200':
+          description: Certification application submitted
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/RunnerAuthApplyResponse'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /api/address:
+    get:
+      tags: [Address]
+      summary: Query current user's addresses
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Address list returned
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/AddressResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    post:
+      tags: [Address]
+      summary: Create a user address
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AddressCreateRequest'
+      responses:
+        '200':
+          description: Address created
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/AddressResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /api/address/{id}:
+    put:
+      tags: [Address]
+      summary: Update a user address
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AddressUpdateRequest'
+      responses:
+        '200':
+          description: Address updated
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/AddressResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    delete:
+      tags: [Address]
+      summary: Delete a user address
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: Address deleted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /api/address/{id}/default:
+    post:
+      tags: [Address]
+      summary: Set an address as default
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: Default address updated
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/AddressResponse'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /api/order:
+    get:
+      tags: [Order]
+      summary: Query current user's orders
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: orderStatus
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/OrderStatus'
+        - name: roleView
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [publisher, runner]
+            default: publisher
+        - name: pageNum
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 1
+        - name: pageSize
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 10
+      responses:
+        '200':
+          description: Order page returned
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/OrderPageResponse'
+    post:
+      tags: [Order]
+      summary: Create an errand order
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OrderCreateRequest'
+      responses:
+        '200':
+          description: Order created with orderStatus=0 and payStatus=0
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/OrderResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /api/order/{id}:
+    get:
+      tags: [Order]
+      summary: Get order detail
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: Order detail returned
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/OrderDetailResponse'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /api/order/{id}/confirm:
+    post:
+      tags: [Order]
+      summary: Confirm order completion
+      description: Only the order publisher can confirm receipt. Orders with active appeals cannot be auto-confirmed.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: Order completed and income record generated
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/OrderResponse'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /api/pay/{orderId}:
+    post:
+      tags: [Pay]
+      summary: Create sandbox payment for an order
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/OrderId'
+      responses:
+        '200':
+          description: Payment order created
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/PayCreateResponse'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /api/order/hall:
+    get:
+      tags: [Order]
+      summary: Query the task hall
+      description: Only certified RUNNER users can query waiting orders.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: categoryId
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int64
+        - name: minAmount
+          in: query
+          required: false
+          schema:
+            type: number
+            format: decimal
+        - name: maxAmount
+          in: query
+          required: false
+          schema:
+            type: number
+            format: decimal
+        - name: distance
+          in: query
+          required: false
+          schema:
+            type: number
+            format: decimal
+            description: Maximum estimated distance in kilometers
+        - name: pageNum
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 1
+        - name: pageSize
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 10
+      responses:
+        '200':
+          description: Waiting orders returned
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/OrderPageResponse'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /api/order/{id}/accept:
+    post:
+      tags: [Order]
+      summary: Accept a waiting order
+      description: |
+        The backend must use conditional update semantics:
+        update errand_order set runner_id=?, order_status=2 where id=? and order_status=1 and is_deleted=0.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: Order accepted
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/OrderResponse'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /api/order/{id}/status:
+    post:
+      tags: [Order]
+      summary: Update fulfillment status
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OrderStatusUpdateRequest'
+      responses:
+        '200':
+          description: Status updated and order_status_log created
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/OrderResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /api/order/{id}/cancel:
+    post:
+      tags: [Order]
+      summary: Cancel order or submit cancellation request
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OrderCancelRequest'
+      responses:
+        '200':
+          description: Order closed, refund started, or appeal created based on current state
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/CancelResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /api/appeal:
+    post:
+      tags: [Order]
+      summary: Submit an appeal for a disputed order
+      description: |
+        The same order can have only one unclosed appeal at a time. Unclosed statuses include pending and processing.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AppealCreateRequest'
+      responses:
+        '200':
+          description: Appeal created
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/AppealResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /api/evaluation:
+    post:
+      tags: [Evaluation]
+      summary: Submit evaluation for a completed order
+      description: Permission is bound to the order publisher, not only the current role.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EvaluationCreateRequest'
+      responses:
+        '200':
+          description: Evaluation created
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/EvaluationResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /api/message/list:
+    get:
+      tags: [Message]
+      summary: Query station messages
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: bizType
+          in: query
+          required: false
+          schema:
+            type: string
+            example: ORDER
+        - name: isRead
+          in: query
+          required: false
+          schema:
+            type: integer
+            enum: [0, 1]
+        - name: pageNum
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 1
+        - name: pageSize
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 10
+      responses:
+        '200':
+          description: Messages returned
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/MessagePageResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/message/{id}/read:
+    post:
+      tags: [Message]
+      summary: Mark one message as read
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: Message marked as read
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /api/message/read-all:
+    post:
+      tags: [Message]
+      summary: Mark all current user's messages as read
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: All messages marked as read
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+
+  /api/system/dict/{dictType}:
+    get:
+      tags: [System]
+      summary: Query dictionary data by type
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: dictType
+          in: path
+          required: true
+          schema:
+            type: string
+          example: order_status
+      responses:
+        '200':
+          description: Dictionary entries returned
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/DictDataResponse'
+
+  /api/notice/list:
+    get:
+      tags: [System]
+      summary: Query published notices
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: noticeType
+          in: query
+          required: false
+          schema:
+            type: integer
+            enum: [1, 2, 3]
+        - name: pageNum
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 1
+        - name: pageSize
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 10
+      responses:
+        '200':
+          description: Published notices returned
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/NoticePageResponse'
+
+  /api/category/list:
+    get:
+      tags: [System]
+      summary: Query enabled errand categories
+      description: Used by order publishing and task hall filters.
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Enabled categories returned
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/CategoryResponse'
+
+  /api/admin/runner-auth/{id}/review:
+    post:
+      tags: [Admin]
+      summary: Review runner certification application
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RunnerAuthReviewRequest'
+      responses:
+        '200':
+          description: Review saved. RUNNER role is granted when approved.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/RunnerAuthReviewResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /api/admin/runner-auth/list:
+    get:
+      tags: [Admin]
+      summary: Query runner certification applications
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: authStatus
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/AuthStatus'
+        - name: keyword
+          in: query
+          required: false
+          schema:
+            type: string
+            description: Search by real name, phone or student number
+        - name: pageNum
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 1
+        - name: pageSize
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 10
+      responses:
+        '200':
+          description: Certification applications returned
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/RunnerAuthPageResponse'
+
+  /api/admin/refund/{id}/approve:
+    post:
+      tags: [Admin]
+      summary: Approve or reject refund record
+      description: |
+        Compensation retry for the same refund record must reuse its original requestId.
+        New independent refund reasons must create a new refund_record with a new requestId.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RefundApproveRequest'
+      responses:
+        '200':
+          description: Refund decision saved
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/RefundResponse'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /api/admin/appeal/{id}/handle:
+    post:
+      tags: [Admin]
+      summary: Handle an appeal
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AppealHandleRequest'
+      responses:
+        '200':
+          description: Appeal handled and corresponding order/refund/score operations triggered
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/AppealResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /api/admin/order/list:
+    get:
+      tags: [Admin]
+      summary: Query platform orders
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: orderStatus
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/OrderStatus'
+        - name: payStatus
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/PayStatus'
+        - name: keyword
+          in: query
+          required: false
+          schema:
+            type: string
+            description: Search by order number, title, publisher or runner
+        - name: pageNum
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 1
+        - name: pageSize
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 10
+      responses:
+        '200':
+          description: Platform order page returned
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/OrderPageResponse'
+
+  /api/admin/category:
+    get:
+      tags: [Admin]
+      summary: Query errand categories for admin
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: categoryStatus
+          in: query
+          required: false
+          schema:
+            type: integer
+            enum: [1, 2]
+        - name: keyword
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: pageNum
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 1
+        - name: pageSize
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 10
+      responses:
+        '200':
+          description: Category page returned
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/CategoryPageResponse'
+    post:
+      tags: [Admin]
+      summary: Create errand category
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CategorySaveRequest'
+      responses:
+        '200':
+          description: Category created
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/CategoryResponse'
+
+  /api/admin/category/{id}:
+    put:
+      tags: [Admin]
+      summary: Update errand category
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CategorySaveRequest'
+      responses:
+        '200':
+          description: Category updated
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/CategoryResponse'
+    delete:
+      tags: [Admin]
+      summary: Disable or delete errand category
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: Category disabled or deleted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+
+  /api/admin/notice:
+    post:
+      tags: [Admin]
+      summary: Create system notice
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NoticeSaveRequest'
+      responses:
+        '200':
+          description: Notice created
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/NoticeResponse'
+
+  /api/admin/notice/{id}:
+    put:
+      tags: [Admin]
+      summary: Update system notice
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NoticeSaveRequest'
+      responses:
+        '200':
+          description: Notice updated
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/NoticeResponse'
+
+  /api/admin/notice/{id}/status:
+    post:
+      tags: [Admin]
+      summary: Publish or offline a system notice
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NoticeStatusRequest'
+      responses:
+        '200':
+          description: Notice status updated
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/NoticeResponse'
+
+  /api/admin/stat/overview:
+    get:
+      tags: [Admin]
+      summary: Query admin dashboard overview statistics
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Overview statistics returned
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/AdminOverviewResponse'
+
+  /api/admin/audit-log/list:
+    get:
+      tags: [Admin]
+      summary: Query audit logs
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: moduleName
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: operatorId
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int64
+        - name: traceId
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: pageNum
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 1
+        - name: pageSize
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 10
+      responses:
+        '200':
+          description: Audit log page returned
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/AuditLogPageResponse'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    Id:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+    OrderId:
+      name: orderId
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+
+  responses:
+    BadRequest:
+      description: Invalid request parameters
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiResponse'
+    Unauthorized:
+      description: Authentication required or failed
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiResponse'
+    Forbidden:
+      description: Permission denied
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiResponse'
+    Conflict:
+      description: Business state conflict
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiResponse'
+
+  schemas:
+    ApiResponse:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: integer
+          example: 0
+        message:
+          type: string
+          example: success
+        data:
+          nullable: true
+
+    RegisterRequest:
+      type: object
+      required: [username, password, phone, realName]
+      properties:
+        username:
+          type: string
+          maxLength: 32
+        password:
+          type: string
+          format: password
+        phone:
+          type: string
+          maxLength: 20
+        realName:
+          type: string
+          maxLength: 32
+        nickName:
+          type: string
+          maxLength: 32
+
+    RegisterResponse:
+      type: object
+      properties:
+        userId:
+          type: integer
+          format: int64
+        username:
+          type: string
+
+    LoginRequest:
+      type: object
+      required: [username, password]
+      properties:
+        username:
+          type: string
+        password:
+          type: string
+          format: password
+
+    LoginResponse:
+      type: object
+      properties:
+        token:
+          type: string
+        tokenType:
+          type: string
+          example: Bearer
+        userId:
+          type: integer
+          format: int64
+        username:
+          type: string
+        roles:
+          type: array
+          items:
+            type: string
+            enum: [STUDENT, RUNNER, ADMIN]
+
+    RunnerAuthApplyRequest:
+      type: object
+      required: [studentNo, realName, phone, certType, certificateImages]
+      properties:
+        studentNo:
+          type: string
+          maxLength: 32
+        realName:
+          type: string
+          maxLength: 32
+        phone:
+          type: string
+          maxLength: 20
+        schoolName:
+          type: string
+          default: 四川轻化工大学
+        campusName:
+          type: string
+          example: 宜宾校区
+        certType:
+          type: integer
+          enum: [1, 2, 3]
+          description: 1 student card, 2 campus card, 3 ID card extension
+        certNo:
+          type: string
+          nullable: true
+        certificateImages:
+          type: array
+          minItems: 1
+          maxItems: 3
+          items:
+            type: string
+            description: Controlled file URL or storage object key
+
+    RunnerAuthApplyResponse:
+      type: object
+      properties:
+        authId:
+          type: integer
+          format: int64
+        authBatchNo:
+          type: string
+        authStatus:
+          $ref: '#/components/schemas/AuthStatus'
+
+    RunnerAuthReviewRequest:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: integer
+          enum: [1, 2]
+          description: 1 approved, 2 rejected
+        rejectReason:
+          type: string
+          maxLength: 255
+
+    RunnerAuthReviewResponse:
+      type: object
+      properties:
+        authId:
+          type: integer
+          format: int64
+        userId:
+          type: integer
+          format: int64
+        authStatus:
+          $ref: '#/components/schemas/AuthStatus'
+        grantedRunnerRole:
+          type: boolean
+
+    RunnerAuthRecord:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        userId:
+          type: integer
+          format: int64
+        authBatchNo:
+          type: string
+        studentNo:
+          type: string
+        schoolName:
+          type: string
+        campusName:
+          type: string
+        authStatus:
+          $ref: '#/components/schemas/AuthStatus'
+        rejectReason:
+          type: string
+          nullable: true
+        currentFlag:
+          type: integer
+          enum: [0, 1]
+        createTime:
+          type: string
+          format: date-time
+
+    RunnerAuthPageResponse:
+      type: object
+      properties:
+        total:
+          type: integer
+          format: int64
+        records:
+          type: array
+          items:
+            $ref: '#/components/schemas/RunnerAuthRecord'
+
+    AddressCreateRequest:
+      type: object
+      required: [contactName, contactPhone, campusName, buildingName, detailAddress]
+      properties:
+        contactName:
+          type: string
+          maxLength: 32
+        contactPhone:
+          type: string
+          maxLength: 20
+        campusName:
+          type: string
+        buildingName:
+          type: string
+        detailAddress:
+          type: string
+          maxLength: 255
+        longitude:
+          type: number
+          format: decimal
+          nullable: true
+        latitude:
+          type: number
+          format: decimal
+          nullable: true
+        isDefault:
+          type: integer
+          enum: [0, 1]
+          default: 0
+
+    AddressUpdateRequest:
+      allOf:
+        - $ref: '#/components/schemas/AddressCreateRequest'
+
+    AddressResponse:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        contactName:
+          type: string
+        contactPhone:
+          type: string
+        campusName:
+          type: string
+        buildingName:
+          type: string
+        detailAddress:
+          type: string
+        isDefault:
+          type: integer
+
+    AmountInfo:
+      type: object
+      required: [baseFee, distanceFee, weightFee, timeFee, tipFee, orderAmount]
+      properties:
+        baseFee:
+          type: number
+          format: decimal
+        distanceFee:
+          type: number
+          format: decimal
+          default: 0
+        weightFee:
+          type: number
+          format: decimal
+          default: 0
+        timeFee:
+          type: number
+          format: decimal
+          default: 0
+        tipFee:
+          type: number
+          format: decimal
+          default: 0
+        orderAmount:
+          type: number
+          format: decimal
+
+    OrderCreateRequest:
+      type: object
+      required: [categoryId, title, orderDesc, pickupAddress, deliveryAddress, deadlineTime, amountInfo]
+      properties:
+        categoryId:
+          type: integer
+          format: int64
+        title:
+          type: string
+          maxLength: 100
+        orderDesc:
+          type: string
+          maxLength: 500
+        pickupAddress:
+          type: string
+          maxLength: 255
+        deliveryAddress:
+          type: string
+          maxLength: 255
+        pickupLng:
+          type: number
+          format: decimal
+          nullable: true
+        pickupLat:
+          type: number
+          format: decimal
+          nullable: true
+        deliveryLng:
+          type: number
+          format: decimal
+          nullable: true
+        deliveryLat:
+          type: number
+          format: decimal
+          nullable: true
+        distanceKm:
+          type: number
+          format: decimal
+          nullable: true
+        deadlineTime:
+          type: string
+          format: date-time
+        amountInfo:
+          $ref: '#/components/schemas/AmountInfo'
+
+    OrderResponse:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        orderNo:
+          type: string
+        publisherId:
+          type: integer
+          format: int64
+        runnerId:
+          type: integer
+          format: int64
+          nullable: true
+        categoryId:
+          type: integer
+          format: int64
+        title:
+          type: string
+        orderAmount:
+          type: number
+          format: decimal
+        estimatedRunnerIncome:
+          type: number
+          format: decimal
+        orderStatus:
+          $ref: '#/components/schemas/OrderStatus'
+        payStatus:
+          $ref: '#/components/schemas/PayStatus'
+        settlementStatus:
+          $ref: '#/components/schemas/SettlementStatus'
+        deadlineTime:
+          type: string
+          format: date-time
+        createTime:
+          type: string
+          format: date-time
+
+    OrderDetailResponse:
+      allOf:
+        - $ref: '#/components/schemas/OrderResponse'
+        - type: object
+          properties:
+            orderDesc:
+              type: string
+            pickupAddress:
+              type: string
+            deliveryAddress:
+              type: string
+            pickupLng:
+              type: number
+              format: decimal
+              nullable: true
+            pickupLat:
+              type: number
+              format: decimal
+              nullable: true
+            deliveryLng:
+              type: number
+              format: decimal
+              nullable: true
+            deliveryLat:
+              type: number
+              format: decimal
+              nullable: true
+            acceptTime:
+              type: string
+              format: date-time
+              nullable: true
+            contactTime:
+              type: string
+              format: date-time
+              nullable: true
+            pickupTime:
+              type: string
+              format: date-time
+              nullable: true
+            deliverTime:
+              type: string
+              format: date-time
+              nullable: true
+            completeTime:
+              type: string
+              format: date-time
+              nullable: true
+
+    OrderPageResponse:
+      type: object
+      properties:
+        total:
+          type: integer
+          format: int64
+        pageNum:
+          type: integer
+        pageSize:
+          type: integer
+        records:
+          type: array
+          items:
+            $ref: '#/components/schemas/OrderResponse'
+
+    PayCreateResponse:
+      type: object
+      properties:
+        paymentId:
+          type: integer
+          format: int64
+        payNo:
+          type: string
+        payChannel:
+          type: string
+          example: ALIPAY_SANDBOX
+        payAmount:
+          type: number
+          format: decimal
+        sandboxPayUrl:
+          type: string
+          nullable: true
+
+    OrderStatusUpdateRequest:
+      type: object
+      required: [targetStatus]
+      properties:
+        targetStatus:
+          $ref: '#/components/schemas/OrderStatus'
+        remark:
+          type: string
+          maxLength: 500
+        requestId:
+          type: string
+          maxLength: 64
+          description: Idempotency key for status changes
+
+    OrderCancelRequest:
+      type: object
+      required: [cancelReason]
+      properties:
+        cancelReason:
+          type: string
+          maxLength: 255
+
+    CancelResponse:
+      type: object
+      properties:
+        orderId:
+          type: integer
+          format: int64
+        orderStatus:
+          $ref: '#/components/schemas/OrderStatus'
+        refundId:
+          type: integer
+          format: int64
+          nullable: true
+        appealId:
+          type: integer
+          format: int64
+          nullable: true
+        message:
+          type: string
+
+    EvaluationCreateRequest:
+      type: object
+      required: [orderId, starScore]
+      properties:
+        orderId:
+          type: integer
+          format: int64
+        starScore:
+          type: integer
+          minimum: 1
+          maximum: 5
+        content:
+          type: string
+          maxLength: 500
+        isAnonymous:
+          type: integer
+          enum: [0, 1]
+          default: 0
+
+    AppealCreateRequest:
+      type: object
+      required: [orderId, appealType, appealContent]
+      properties:
+        orderId:
+          type: integer
+          format: int64
+        appealType:
+          type: integer
+          enum: [1, 2, 3]
+          description: 1 cancellation dispute, 2 fulfillment dispute, 3 refund dispute
+        appealContent:
+          type: string
+          maxLength: 1000
+        evidenceUrls:
+          type: array
+          items:
+            type: string
+          description: Controlled file URLs or object keys
+
+    AppealResponse:
+      type: object
+      properties:
+        appealId:
+          type: integer
+          format: int64
+        appealNo:
+          type: string
+        orderId:
+          type: integer
+          format: int64
+        appealStatus:
+          type: integer
+          enum: [0, 1, 2, 3, 4]
+        beforeOrderStatus:
+          $ref: '#/components/schemas/OrderStatus'
+
+    AppealHandleRequest:
+      type: object
+      required: [appealStatus, resultOrderStatus, handleResult]
+      properties:
+        appealStatus:
+          type: integer
+          enum: [2, 3, 4]
+          description: 2 upheld, 3 rejected, 4 closed
+        resultOrderStatus:
+          $ref: '#/components/schemas/OrderStatus'
+        responsibilityType:
+          type: integer
+          enum: [1, 2, 3, 4]
+          nullable: true
+          description: 1 user, 2 runner, 3 both, 4 platform/system
+        refundDecision:
+          type: integer
+          enum: [0, 1, 2]
+          nullable: true
+          description: 0 no refund, 1 full refund, 2 partial refund
+        refundAmount:
+          type: number
+          format: decimal
+          nullable: true
+        handleResult:
+          type: string
+          maxLength: 500
+
+    EvaluationResponse:
+      type: object
+      properties:
+        evaluationId:
+          type: integer
+          format: int64
+        orderId:
+          type: integer
+          format: int64
+        runnerId:
+          type: integer
+          format: int64
+        starScore:
+          type: integer
+
+    MessageResponse:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        bizType:
+          type: string
+        bizId:
+          type: integer
+          format: int64
+          nullable: true
+        title:
+          type: string
+        content:
+          type: string
+        messageLevel:
+          type: integer
+        isRead:
+          type: integer
+        sendTime:
+          type: string
+          format: date-time
+
+    MessagePageResponse:
+      type: object
+      properties:
+        total:
+          type: integer
+          format: int64
+        unreadCount:
+          type: integer
+          format: int64
+        records:
+          type: array
+          items:
+            $ref: '#/components/schemas/MessageResponse'
+
+    RefundApproveRequest:
+      type: object
+      required: [result, refundAmount]
+      properties:
+        result:
+          type: integer
+          enum: [0, 1, 2]
+          description: 0 reject/no refund, 1 full refund, 2 partial refund
+        refundAmount:
+          type: number
+          format: decimal
+        approveResult:
+          type: string
+          maxLength: 255
+
+    RefundResponse:
+      type: object
+      properties:
+        refundId:
+          type: integer
+          format: int64
+        refundNo:
+          type: string
+        requestId:
+          type: string
+        refundStatus:
+          type: integer
+          enum: [0, 1, 2, 3]
+        refundAmount:
+          type: number
+          format: decimal
+        payStatus:
+          $ref: '#/components/schemas/PayStatus'
+
+    DictDataResponse:
+      type: object
+      properties:
+        dictType:
+          type: string
+        dictValue:
+          type: string
+        dictLabel:
+          type: string
+        sortNo:
+          type: integer
+        cssClass:
+          type: string
+          nullable: true
+
+    FeeRange:
+      type: object
+      required: [min, fee]
+      properties:
+        min:
+          type: number
+        max:
+          type: number
+          nullable: true
+        fee:
+          type: number
+          format: decimal
+
+    CategorySaveRequest:
+      type: object
+      required: [categoryName, categoryCode, baseFee, distanceFeeRule]
+      properties:
+        categoryName:
+          type: string
+          maxLength: 64
+        categoryCode:
+          type: string
+          maxLength: 32
+        baseFee:
+          type: number
+          format: decimal
+        distanceFeeRule:
+          type: array
+          description: Continuous [min,max) ranges. max=null means no upper bound.
+          items:
+            $ref: '#/components/schemas/FeeRange'
+        urgentFee:
+          type: number
+          format: decimal
+          default: 0
+        weightFeeRule:
+          type: array
+          nullable: true
+          items:
+            $ref: '#/components/schemas/FeeRange'
+        timeFeeRule:
+          type: array
+          nullable: true
+          items:
+            type: object
+        feeRuleVersion:
+          type: string
+          default: v1
+        sortNo:
+          type: integer
+          default: 0
+        categoryStatus:
+          type: integer
+          enum: [1, 2]
+          default: 1
+
+    CategoryResponse:
+      allOf:
+        - $ref: '#/components/schemas/CategorySaveRequest'
+        - type: object
+          properties:
+            id:
+              type: integer
+              format: int64
+
+    CategoryPageResponse:
+      type: object
+      properties:
+        total:
+          type: integer
+          format: int64
+        records:
+          type: array
+          items:
+            $ref: '#/components/schemas/CategoryResponse'
+
+    NoticeSaveRequest:
+      type: object
+      required: [noticeTitle, noticeContent, noticeType, noticeStatus]
+      properties:
+        noticeTitle:
+          type: string
+          maxLength: 100
+        noticeContent:
+          type: string
+        noticeType:
+          type: integer
+          enum: [1, 2, 3]
+          default: 1
+        noticeStatus:
+          type: integer
+          enum: [0, 1, 2]
+          default: 0
+
+    NoticeStatusRequest:
+      type: object
+      required: [noticeStatus]
+      properties:
+        noticeStatus:
+          type: integer
+          enum: [0, 1, 2]
+
+    NoticeResponse:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        noticeTitle:
+          type: string
+        noticeContent:
+          type: string
+        noticeType:
+          type: integer
+        noticeStatus:
+          type: integer
+        publishTime:
+          type: string
+          format: date-time
+          nullable: true
+
+    NoticePageResponse:
+      type: object
+      properties:
+        total:
+          type: integer
+          format: int64
+        records:
+          type: array
+          items:
+            $ref: '#/components/schemas/NoticeResponse'
+
+    AdminOverviewResponse:
+      type: object
+      properties:
+        orderCount:
+          type: integer
+          format: int64
+        paidAmount:
+          type: number
+          format: decimal
+        refundAmount:
+          type: number
+          format: decimal
+        activeRunnerCount:
+          type: integer
+          format: int64
+        appealCount:
+          type: integer
+          format: int64
+        pendingAuthCount:
+          type: integer
+          format: int64
+
+    AuditLogResponse:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        moduleName:
+          type: string
+        bizType:
+          type: string
+          nullable: true
+        bizId:
+          type: string
+          nullable: true
+        operatorId:
+          type: integer
+          format: int64
+        operatorRole:
+          type: string
+        actionType:
+          type: string
+        requestPath:
+          type: string
+          nullable: true
+        requestMethod:
+          type: string
+          nullable: true
+        resultCode:
+          type: string
+        resultMsg:
+          type: string
+          nullable: true
+        ipAddress:
+          type: string
+          nullable: true
+        traceId:
+          type: string
+          nullable: true
+        createTime:
+          type: string
+          format: date-time
+
+    AuditLogPageResponse:
+      type: object
+      properties:
+        total:
+          type: integer
+          format: int64
+        records:
+          type: array
+          items:
+            $ref: '#/components/schemas/AuditLogResponse'
+
+    OrderStatus:
+      type: integer
+      description: 0待支付 1待接单 2已接单 3已联系用户 4已取件 5配送中 6已送达 7已完成 8已取消 9已关闭 10申诉中
+      enum: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+
+    PayStatus:
+      type: integer
+      description: 0未支付 1支付中 2支付成功 3退款中 4已退款 5支付关闭 6部分退款
+      enum: [0, 1, 2, 3, 4, 5, 6]
+
+    SettlementStatus:
+      type: integer
+      description: 0待结算 1结算中 2已结算 3已回滚
+      enum: [0, 1, 2, 3]
+
+    AuthStatus:
+      type: integer
+      description: 0待审核 1审核通过 2审核驳回 3已失效
+      enum: [0, 1, 2, 3]

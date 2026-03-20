@@ -1,0 +1,19 @@
+# Temp files
+~$*.docx
+*.tmp
+
+# Docx extraction
+tmp_docx_review/
+
+# IDE
+.idea/
+.claude/
+.vscode/
+*.iml
+
+# Spring boot sensitive config
+application-dev.yml
+
+# OS
+.DS_Store
+Thumbs.db
