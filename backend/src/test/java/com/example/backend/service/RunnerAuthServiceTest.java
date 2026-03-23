@@ -2,7 +2,9 @@ package com.example.backend.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
+import com.baomidou.mybatisplus.core.MybatisConfiguration;
 import com.baomidou.mybatisplus.core.metadata.IPage;
+import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.example.backend.common.ErrorCode;
 import com.example.backend.common.enums.AuthStatusEnum;
@@ -19,6 +21,8 @@ import com.example.backend.mapper.SysUserMapper;
 import com.example.backend.mapper.SysUserRoleMapper;
 import com.example.backend.service.impl.RunnerAuthServiceImpl;
 import com.example.backend.vo.RunnerAuthVO;
+import org.apache.ibatis.builder.MapperBuilderAssistant;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -48,6 +52,13 @@ import static org.mockito.Mockito.*;
 @ExtendWith(MockitoExtension.class)
 @DisplayName("RunnerAuthService 单元测试")
 class RunnerAuthServiceTest {
+
+    @BeforeAll
+    static void initMybatisPlusTableInfo() {
+        MybatisConfiguration configuration = new MybatisConfiguration();
+        configuration.setMapUnderscoreToCamelCase(true);
+        TableInfoHelper.initTableInfo(new MapperBuilderAssistant(configuration, ""), RunnerAuth.class);
+    }
 
     /**
      * 跑腿员认证 Mapper 的 Mock 对象。
