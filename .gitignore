@@ -17,6 +17,9 @@ application-dev.yml
 # Claude Code
 CLAUDE.md
 
+# Maven local repo
+.m2/
+
 # OS
 .DS_Store
 Thumbs.db

@@ -1,0 +1,818 @@
+package com.example.backend.service;
+
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.metadata.IPage;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.example.backend.common.ErrorCode;
+import com.example.backend.common.enums.OrderStatusEnum;
+import com.example.backend.common.enums.PayStatusEnum;
+import com.example.backend.common.exception.BusinessException;
+import com.example.backend.dto.request.OrderCreateRequest;
+import com.example.backend.entity.ErrandCategory;
+import com.example.backend.entity.ErrandOrder;
+import com.example.backend.entity.OrderStatusLog;
+import com.example.backend.mapper.ErrandCategoryMapper;
+import com.example.backend.mapper.ErrandOrderMapper;
+import com.example.backend.mapper.OrderStatusLogMapper;
+import com.example.backend.service.impl.OrderServiceImpl;
+import com.example.backend.vo.OrderDetailVO;
+import com.example.backend.vo.OrderStatusLogVO;
+import com.example.backend.vo.OrderVO;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Nested;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+
+import java.math.BigDecimal;
+import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.List;
+
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.*;
+import static org.mockito.Mockito.*;
+
+/**
+ * OrderService 单元测试类
+ * <p>
+ * 使用 Mockito 对 {@link OrderServiceImpl} 进行单元测试，
+ * 覆盖订单创建（含费用计算与状态日志）、我的订单分页查询及订单详情查看三大核心业务流程。
+ * <p>
+ * 测试采用 @Nested 分组，将创建订单、订单列表和订单详情相关测试分别组织，
+ * 每组包含正常场景和各类异常场景，确保业务逻辑的完整性验证。
+ * <p>
+ * Mock 策略：使用 {@code @Mock} 模拟所有 Mapper 层依赖，
+ * 通过 {@code @InjectMocks} 将模拟对象注入被测 Service 实例，
+ * 完全隔离数据库和 Spring 容器依赖。
+ *
+ * @author campus_running
+ */
+@ExtendWith(MockitoExtension.class)
+@DisplayName("OrderService 单元测试")
+class OrderServiceTest {
+
+    // =========================================================================
+    // Mock 依赖
+    // =========================================================================
+
+    /** Mock 跑腿订单 Mapper */
+    @Mock
+    private ErrandOrderMapper errandOrderMapper;
+
+    /** Mock 任务分类 Mapper */
+    @Mock
+    private ErrandCategoryMapper errandCategoryMapper;
+
+    /** Mock 订单状态流转日志 Mapper */
+    @Mock
+    private OrderStatusLogMapper orderStatusLogMapper;
+
+    /** 自动注入 Mock 依赖的被测对象 */
+    @InjectMocks
+    private OrderServiceImpl orderService;
+
+    // =========================================================================
+    // 通用测试数据
+    // =========================================================================
+
+    /** 测试用用户ID（发布人） */
+    private static final Long USER_ID = 1L;
+
+    /** 测试用订单创建请求 */
+    private OrderCreateRequest baseRequest;
+
+    /** 测试用启用状态的分类 */
+    private ErrandCategory enabledCategory;
+
+    /**
+     * 每个测试方法执行前的初始化操作
+     * <p>
+     * 构建通用的订单创建请求和启用状态分类对象，
+     * 分类包含距离阶梯收费规则JSON，基础费用为3元。
+     */
+    @BeforeEach
+    void setUp() {
+        baseRequest = new OrderCreateRequest();
+        baseRequest.setCategoryId(1L);
+        baseRequest.setTitle("帮忙取快递");
+        baseRequest.setOrderDesc("从菜鸟驿站取一个快递送到宿舍");
+        baseRequest.setPickupAddress("菜鸟驿站");
+        baseRequest.setDeliveryAddress("12号宿舍楼");
+        baseRequest.setPickupLng(BigDecimal.valueOf(120.5123));
+        baseRequest.setPickupLat(BigDecimal.valueOf(30.2345));
+        baseRequest.setDeliveryLng(BigDecimal.valueOf(120.5156));
+        baseRequest.setDeliveryLat(BigDecimal.valueOf(30.2378));
+        baseRequest.setDistanceKm(BigDecimal.valueOf(2.5));
+        baseRequest.setDeadlineTime(LocalDateTime.now().plusHours(2));
+
+        enabledCategory = buildCategory(1L, "快递代取", BigDecimal.valueOf(3.00),
+                "[{\"min\":0,\"max\":1,\"fee\":0},{\"min\":1,\"max\":3,\"fee\":2}]", 1);
+    }
+
+    // =========================================================================
+    // 创建订单测试组
+    // =========================================================================
+
+    /**
+     * 创建订单功能测试组
+     * <p>
+     * 覆盖订单创建的五种核心场景：
+     * <ol>
+     *   <li>正常创建成功 —— 分类存在且启用，距离在阶梯规则范围内</li>
+     *   <li>分类不存在异常</li>
+     *   <li>分类已停用异常</li>
+     *   <li>无距离收费规则时使用默认费用（零）</li>
+     *   <li>距离为null时使用第一条规则的费用</li>
+     * </ol>
+     */
+    @Nested
+    @DisplayName("创建订单")
+    class CreateOrderTests {
+
+        /**
+         * 测试正常创建订单成功
+         * <p>
+         * 验证点：
+         * <ul>
+         *   <li>分类查询成功且状态为启用（1）</li>
+         *   <li>距离费用根据阶梯规则正确计算（distanceKm=2.5 匹配区间 [1,3) 费用为2）</li>
+         *   <li>订单金额 = 基础费(3) + 距离费(2) + 小费(默认0) = 5</li>
+         *   <li>订单编号以 "ER" 开头</li>
+         *   <li>订单状态初始化为 UNPAID(0)、支付状态 UNPAID(0)、结算状态 PENDING(0)</li>
+         *   <li>状态流转日志记录 beforeStatus=null、afterStatus=0、triggerAction="CREATE_ORDER"</li>
+         * </ul>
+         */
+        @Test
+        @DisplayName("应成功创建订单")
+        void shouldCreateOrderSuccessfully() {
+            // Given: 分类存在且启用
+            when(errandCategoryMapper.selectById(baseRequest.getCategoryId())).thenReturn(enabledCategory);
+            // insert 成功后设置订单ID
+            doAnswer(inv -> {
+                ErrandOrder order = inv.getArgument(0);
+                order.setId(100L);
+                return 1;
+            }).when(errandOrderMapper).insert(any(ErrandOrder.class));
+            // 状态日志插入成功
+            when(orderStatusLogMapper.insert(any(OrderStatusLog.class))).thenReturn(1);
+
+            // When: 执行创建订单
+            Long orderId = orderService.create(USER_ID, baseRequest);
+
+            // Then: 返回订单ID
+            assertEquals(Long.valueOf(100L), orderId, "应返回新创建的订单ID");
+
+            // 验证分类查询
+            verify(errandCategoryMapper).selectById(baseRequest.getCategoryId());
+
+            // 验证订单实体各字段
+            ArgumentCaptor<ErrandOrder> orderCaptor = ArgumentCaptor.forClass(ErrandOrder.class);
+            verify(errandOrderMapper).insert(orderCaptor.capture());
+            ErrandOrder savedOrder = orderCaptor.getValue();
+
+            assertNotNull(savedOrder.getOrderNo(), "订单编号不应为空");
+            assertTrue(savedOrder.getOrderNo().startsWith("ER"), "订单编号应以ER开头");
+            assertEquals(USER_ID, savedOrder.getPublisherId(), "发布人ID应一致");
+            assertNull(savedOrder.getRunnerId(), "接单人ID初始应为null");
+            assertEquals(baseRequest.getCategoryId(), savedOrder.getCategoryId(), "分类ID应一致");
+            assertEquals(baseRequest.getTitle(), savedOrder.getTitle(), "标题应一致");
+            assertEquals(baseRequest.getOrderDesc(), savedOrder.getOrderDesc(), "描述应一致");
+            assertEquals(baseRequest.getPickupAddress(), savedOrder.getPickupAddress(), "取件地址应一致");
+            assertEquals(baseRequest.getDeliveryAddress(), savedOrder.getDeliveryAddress(), "送达地址应一致");
+            assertEquals(baseRequest.getPickupLng(), savedOrder.getPickupLng(), "取件经度应一致");
+            assertEquals(baseRequest.getPickupLat(), savedOrder.getPickupLat(), "取件纬度应一致");
+            assertEquals(baseRequest.getDeliveryLng(), savedOrder.getDeliveryLng(), "送达经度应一致");
+            assertEquals(baseRequest.getDeliveryLat(), savedOrder.getDeliveryLat(), "送达纬度应一致");
+            assertEquals(baseRequest.getDistanceKm(), savedOrder.getDistanceKm(), "距离应一致");
+            assertEquals(baseRequest.getDeadlineTime(), savedOrder.getDeadlineTime(), "期望完成时间应一致");
+
+            // 验证费用
+            assertEquals(BigDecimal.valueOf(3.00).stripTrailingZeros(),
+                    savedOrder.getBaseFee().stripTrailingZeros(), "基础费用应为3");
+            assertEquals(BigDecimal.valueOf(2).stripTrailingZeros(),
+                    savedOrder.getDistanceFee().stripTrailingZeros(), "距离费用应为2（匹配区间[1,3)）");
+            assertEquals(BigDecimal.ZERO.stripTrailingZeros(),
+                    savedOrder.getWeightFee().stripTrailingZeros(), "重量费用初始应为0");
+            assertEquals(BigDecimal.ZERO.stripTrailingZeros(),
+                    savedOrder.getTimeFee().stripTrailingZeros(), "时段费用初始应为0");
+            assertEquals(BigDecimal.ZERO.stripTrailingZeros(),
+                    savedOrder.getTipFee().stripTrailingZeros(), "小费默认应为0");
+            assertEquals(BigDecimal.valueOf(5).stripTrailingZeros(),
+                    savedOrder.getOrderAmount().stripTrailingZeros(), "订单总金额应为5(3+2+0+0+0)");
+            assertEquals(BigDecimal.ZERO.stripTrailingZeros(),
+                    savedOrder.getPlatformCommission().stripTrailingZeros(), "平台抽成初始应为0");
+            assertEquals(BigDecimal.valueOf(5).stripTrailingZeros(),
+                    savedOrder.getEstimatedRunnerIncome().stripTrailingZeros(), "预估跑腿员收益应为5");
+
+            // 验证订单状态
+            assertEquals(Integer.valueOf(0), savedOrder.getOrderStatus(), "订单状态应为UNPAID(0)");
+            assertEquals(Integer.valueOf(0), savedOrder.getPayStatus(), "支付状态应为UNPAID(0)");
+            assertEquals(Integer.valueOf(0), savedOrder.getSettlementStatus(), "结算状态应为PENDING(0)");
+
+            // 验证状态流转日志
+            ArgumentCaptor<OrderStatusLog> logCaptor = ArgumentCaptor.forClass(OrderStatusLog.class);
+            verify(orderStatusLogMapper).insert(logCaptor.capture());
+            OrderStatusLog statusLog = logCaptor.getValue();
+
+            assertEquals(Long.valueOf(100L), statusLog.getOrderId(), "日志关联的订单ID应为100");
+            assertEquals(savedOrder.getOrderNo(), statusLog.getOrderNo(), "日志中的订单编号应一致");
+            assertNull(statusLog.getBeforeStatus(), "初始日志的变更前状态应为null");
+            assertEquals(Integer.valueOf(0), statusLog.getAfterStatus(), "变更后状态应为UNPAID(0)");
+            assertEquals("CREATE_ORDER", statusLog.getTriggerAction(), "触发动作应为CREATE_ORDER");
+            assertEquals(USER_ID, statusLog.getOperatorUserId(), "操作人ID应为发布人ID");
+            assertEquals("STUDENT", statusLog.getOperatorRole(), "操作人角色应为STUDENT");
+        }
+
+        /**
+         * 测试分类不存在时抛出异常
+         * <p>
+         * 当 {@code errandCategoryMapper.selectById} 返回 null 时，
+         * 应抛出 {@link BusinessException} 且错误码为 {@link ErrorCode#CATEGORY_NOT_FOUND}。
+         */
+        @Test
+        @DisplayName("分类不存在时应抛出 CATEGORY_NOT_FOUND 异常")
+        void shouldThrowWhenCategoryNotFound() {
+            // Given: 分类不存在
+            when(errandCategoryMapper.selectById(baseRequest.getCategoryId())).thenReturn(null);
+
+            // When & Then: 应抛出 BusinessException
+            BusinessException exception = assertThrows(BusinessException.class,
+                    () -> orderService.create(USER_ID, baseRequest),
+                    "分类不存在时应抛出 BusinessException");
+
+            assertEquals(ErrorCode.CATEGORY_NOT_FOUND.getCode(), exception.getCode(),
+                    "错误码应为 CATEGORY_NOT_FOUND(9001)");
+            assertEquals(ErrorCode.CATEGORY_NOT_FOUND.getMessage(), exception.getMessage(),
+                    "错误信息应为: 分类不存在");
+
+            // 验证未执行后续 insert 操作
+            verify(errandOrderMapper, never()).insert(any(ErrandOrder.class));
+            verify(orderStatusLogMapper, never()).insert(any(OrderStatusLog.class));
+        }
+
+        /**
+         * 测试分类已停用时抛出异常
+         * <p>
+         * 当分类存在但 {@code categoryStatus} 不为 1（启用）时，
+         * 应抛出 {@link BusinessException} 且错误码为 {@link ErrorCode#CATEGORY_NOT_FOUND}，
+         * 并附带自定义错误信息 "该分类已停用"。
+         */
+        @Test
+        @DisplayName("分类已停用时应抛出 CATEGORY_NOT_FOUND 异常")
+        void shouldThrowWhenCategoryDisabled() {
+            // Given: 分类存在但已停用（categoryStatus=2）
+            ErrandCategory disabledCategory = buildCategory(1L, "已停用分类", BigDecimal.valueOf(3.00),
+                    "[{\"min\":0,\"max\":1,\"fee\":0},{\"min\":1,\"max\":3,\"fee\":2}]", 2);
+            when(errandCategoryMapper.selectById(baseRequest.getCategoryId())).thenReturn(disabledCategory);
+
+            // When & Then: 应抛出 BusinessException
+            BusinessException exception = assertThrows(BusinessException.class,
+                    () -> orderService.create(USER_ID, baseRequest),
+                    "分类已停用时应抛出 BusinessException");
+
+            assertEquals(ErrorCode.CATEGORY_NOT_FOUND.getCode(), exception.getCode(),
+                    "错误码应为 CATEGORY_NOT_FOUND(9001)");
+            assertEquals("该分类已停用", exception.getMessage(),
+                    "错误信息应为: 该分类已停用");
+
+            // 验证未执行后续 insert 操作
+            verify(errandOrderMapper, never()).insert(any(ErrandOrder.class));
+            verify(orderStatusLogMapper, never()).insert(any(OrderStatusLog.class));
+        }
+
+        /**
+         * 测试无距离收费规则时使用默认费用（零）
+         * <p>
+         * 当分类的 {@code distanceFeeRule} 为 null 时，距离费用应为 ZERO。
+         * 验证即使分类有基础费用，没有距离规则时距离费用也为0。
+         */
+        @Test
+        @DisplayName("无距离收费规则时应抛出 CATEGORY_INVALID_FEE_RULE 异常")
+        void shouldThrowWhenNoDistanceRule() {
+            ErrandCategory categoryNoRule = buildCategory(1L, "快递代取", BigDecimal.valueOf(3.00), null, 1);
+            when(errandCategoryMapper.selectById(baseRequest.getCategoryId())).thenReturn(categoryNoRule);
+
+            BusinessException exception = assertThrows(BusinessException.class,
+                    () -> orderService.create(USER_ID, baseRequest));
+
+            assertEquals(ErrorCode.CATEGORY_INVALID_FEE_RULE.getCode(), exception.getCode());
+        }
+
+        /**
+         * 测试距离为null时使用第一条规则的费用
+         * <p>
+         * 当请求中 {@code distanceKm} 为 null 时，应取第一条距离规则的fee值作为距离费用。
+         * 第一条规则 {@code {"min":0,"max":1,"fee":0}} 费用为0。
+         */
+        @Test
+        @DisplayName("距离为null时应抛出 BAD_REQUEST 异常")
+        void shouldThrowWhenDistanceIsNull() {
+            OrderCreateRequest nullDistanceRequest = new OrderCreateRequest();
+            nullDistanceRequest.setCategoryId(1L);
+            nullDistanceRequest.setTitle("测试任务");
+            nullDistanceRequest.setOrderDesc("测试描述");
+            nullDistanceRequest.setPickupAddress("取件点");
+            nullDistanceRequest.setDeliveryAddress("送达点");
+            nullDistanceRequest.setPickupLng(BigDecimal.valueOf(120.5));
+            nullDistanceRequest.setPickupLat(BigDecimal.valueOf(30.2));
+            nullDistanceRequest.setDeliveryLng(BigDecimal.valueOf(120.8));
+            nullDistanceRequest.setDeliveryLat(BigDecimal.valueOf(30.5));
+            nullDistanceRequest.setDistanceKm(null);
+            nullDistanceRequest.setDeadlineTime(LocalDateTime.now().plusHours(1));
+
+            when(errandCategoryMapper.selectById(1L)).thenReturn(enabledCategory);
+
+            BusinessException exception = assertThrows(BusinessException.class,
+                    () -> orderService.create(USER_ID, nullDistanceRequest));
+
+            assertEquals(ErrorCode.BAD_REQUEST.getCode(), exception.getCode());
+        }
+    }
+
+    // =========================================================================
+    // 我的订单测试组
+    // =========================================================================
+
+    /**
+     * 我的订单功能测试组
+     * <p>
+     * 覆盖分页查询的三种核心场景：
+     * <ol>
+     *   <li>查询用户关联订单 —— 作为发布人或接单人关联的订单全部返回</li>
+     *   <li>按订单状态筛选</li>
+     *   <li>无关联订单时返回空页</li>
+     * </ol>
+     */
+    @Nested
+    @DisplayName("我的订单")
+    class MyOrdersTests {
+
+        /**
+         * 测试返回用户关联的订单列表
+         * <p>
+         * 验证点：
+         * <ul>
+         *   <li>用户作为发布人的订单被返回</li>
+         *   <li>用户作为接单人的订单被返回</li>
+         *   <li>每个订单的分类名称正确填充</li>
+         *   <li>分页信息（总数、每页大小）正确</li>
+         * </ul>
+         */
+        @Test
+        @DisplayName("应返回用户作为发布人或接单人的订单列表")
+        void shouldReturnMyOrders() {
+            // Given: 用户有一个作为发布人的订单，一个作为接单人的订单
+            ErrandOrder orderAsPublisher = buildOrder(1L, "ER20240101001", USER_ID, null, 1L, 0);
+            ErrandOrder orderAsRunner = buildOrder(2L, "ER20240101002", 2L, USER_ID, 2L, 1);
+            List<ErrandOrder> records = Arrays.asList(orderAsPublisher, orderAsRunner);
+
+            when(errandOrderMapper.selectPage(any(Page.class), any(LambdaQueryWrapper.class)))
+                    .thenAnswer(inv -> {
+                        @SuppressWarnings("unchecked")
+                        Page<ErrandOrder> page = inv.getArgument(0);
+                        page.setRecords(records);
+                        page.setTotal(records.size());
+                        return page;
+                    });
+
+            ErrandCategory cat1 = buildCategory(1L, "快递代取", BigDecimal.valueOf(3.00), null, 1);
+            ErrandCategory cat2 = buildCategory(2L, "食堂代购", BigDecimal.valueOf(5.00), null, 1);
+            when(errandCategoryMapper.selectById(1L)).thenReturn(cat1);
+            when(errandCategoryMapper.selectById(2L)).thenReturn(cat2);
+
+            // When: 查询我的订单（不筛选状态）
+            IPage<OrderVO> result = orderService.myOrders(USER_ID, null, null, 1, 10);
+
+            // Then: 验证分页信息
+            assertNotNull(result, "返回结果不应为null");
+            assertEquals(2, result.getTotal(), "总数应为2");
+            assertEquals(2, result.getRecords().size(), "记录数应为2");
+
+            // 验证第一条记录（发布人订单）
+            OrderVO vo1 = result.getRecords().get(0);
+            assertEquals(Long.valueOf(1L), vo1.getId(), "订单ID应一致");
+            assertEquals("ER20240101001", vo1.getOrderNo(), "订单编号应一致");
+            assertEquals(USER_ID, vo1.getPublisherId(), "发布人ID应一致");
+            assertNull(vo1.getRunnerId(), "该订单接单人应为null");
+            assertEquals("快递代取", vo1.getCategoryName(), "分类名称应正确");
+
+            // 验证第二条记录（接单人订单）
+            OrderVO vo2 = result.getRecords().get(1);
+            assertEquals(Long.valueOf(2L), vo2.getId(), "订单ID应一致");
+            assertEquals("ER20240101002", vo2.getOrderNo(), "订单编号应一致");
+            assertEquals(Long.valueOf(2L), vo2.getPublisherId(), "发布人ID应为2");
+            assertEquals(USER_ID, vo2.getRunnerId(), "接单人ID应为当前用户");
+            assertEquals("食堂代购", vo2.getCategoryName(), "分类名称应正确");
+
+            // 验证 selectPage 被调用
+            verify(errandOrderMapper).selectPage(any(Page.class), any(LambdaQueryWrapper.class));
+        }
+
+        /**
+         * 测试按订单状态和支付状态筛选
+         * <p>
+         * 当传入 {@code orderStatus} 和 {@code payStatus} 参数时，仅返回状态匹配的订单。
+         * 由于底层查询由 MyBatis-Plus 执行，Mock 层直接返回筛选后的数据，
+         * 测试验证分页结果中的记录均符合筛选条件。
+         * </p>
+         */
+        @Test
+        @DisplayName("应按订单状态和支付状态筛选并仅返回匹配的订单")
+        void shouldFilterByOrderStatus() {
+            // Given: 返回仅含状态为0（UNPAID）且支付状态为0（UNPAID）的订单
+            ErrandOrder unpaidOrder = buildOrder(1L, "ER20240101003", USER_ID, null, 1L, 0);
+            unpaidOrder.setPayStatus(PayStatusEnum.UNPAID.getCode());
+            // buildOrder 第6个参数 orderStatus=0
+            List<ErrandOrder> filteredRecords = Collections.singletonList(unpaidOrder);
+
+            when(errandOrderMapper.selectPage(any(Page.class), any(LambdaQueryWrapper.class)))
+                    .thenAnswer(inv -> {
+                        @SuppressWarnings("unchecked")
+                        Page<ErrandOrder> page = inv.getArgument(0);
+                        page.setRecords(filteredRecords);
+                        page.setTotal(filteredRecords.size());
+                        return page;
+                    });
+
+            ErrandCategory category = buildCategory(1L, "快递代取", BigDecimal.valueOf(3.00), null, 1);
+            when(errandCategoryMapper.selectById(1L)).thenReturn(category);
+
+            // When: 查询状态为0且支付状态也为0的订单
+            IPage<OrderVO> result = orderService.myOrders(USER_ID,
+                    OrderStatusEnum.UNPAID.getCode(),
+                    PayStatusEnum.UNPAID.getCode(),
+                    1, 10);
+
+            // Then: 仅返回匹配状态的订单
+            assertNotNull(result, "返回结果不应为null");
+            assertEquals(1, result.getTotal(), "筛选后总数应为1");
+            assertEquals(1, result.getRecords().size(), "筛选后记录数应为1");
+            assertEquals(Integer.valueOf(0), result.getRecords().get(0).getOrderStatus(),
+                    "返回订单的订单状态应为0(UNPAID)");
+            assertEquals(Integer.valueOf(PayStatusEnum.UNPAID.getCode()), result.getRecords().get(0).getPayStatus(),
+                    "返回订单的支付状态应为0(UNPAID)");
+
+            // 验证 selectPage 被调用
+            verify(errandOrderMapper).selectPage(any(Page.class), any(LambdaQueryWrapper.class));
+        }
+
+        /**
+         * 测试无关联订单时返回空页
+         * <p>
+         * 当用户没有任何发布或接单记录时，应返回空的分页结果。
+         * 验证 total 为 0，records 为空列表。
+         * </p>
+         */
+        @Test
+        @DisplayName("无关联订单时应返回空页")
+        void shouldReturnEmptyPage() {
+            // Given: 无任何关联订单
+            List<ErrandOrder> emptyRecords = new ArrayList<>();
+
+            when(errandOrderMapper.selectPage(any(Page.class), any(LambdaQueryWrapper.class)))
+                    .thenAnswer(inv -> {
+                        @SuppressWarnings("unchecked")
+                        Page<ErrandOrder> page = inv.getArgument(0);
+                        page.setRecords(emptyRecords);
+                        page.setTotal(0L);
+                        return page;
+                    });
+
+            // When: 查询我的订单
+            IPage<OrderVO> result = orderService.myOrders(USER_ID, null, null, 1, 10);
+
+            // Then: 返回空分页
+            assertNotNull(result, "返回结果不应为null");
+            assertEquals(0, result.getTotal(), "总数应为0");
+            assertTrue(result.getRecords().isEmpty(), "记录列表应为空");
+
+            // 验证 selectPage 被调用
+            verify(errandOrderMapper).selectPage(any(Page.class), any(LambdaQueryWrapper.class));
+            // 分类查询不应被调用
+            verify(errandCategoryMapper, never()).selectById(anyLong());
+        }
+    }
+
+    // =========================================================================
+    // 订单详情测试组
+    // =========================================================================
+
+    /**
+     * 订单详情功能测试组
+     * <p>
+     * 覆盖订单详情的四种核心场景：
+     * <ol>
+     *   <li>正常查询详情 —— 订单存在且用户为所属人，含状态流转日志</li>
+     *   <li>订单不存在异常</li>
+     *   <li>用户非订单所属人异常</li>
+     *   <li>接单人也可查看订单详情 —— 确保非发布人但为接单人的用户也能查看</li>
+     * </ol>
+     */
+    @Nested
+    @DisplayName("订单详情")
+    class DetailTests {
+
+        /**
+         * 测试正常返回订单详情（含状态流转日志）
+         * <p>
+         * 验证点：
+         * <ul>
+         *   <li>订单查询成功</li>
+         *   <li>发布人匹配所有权校验通过</li>
+         *   <li>分类名称正确填充</li>
+         *   <li>状态流转日志按时间升序返回</li>
+         *   <li>返回的 {@link OrderDetailVO} 包含所有订单字段和日志列表</li>
+         * </ul>
+         */
+        @Test
+        @DisplayName("应返回订单详情及状态流转日志")
+        void shouldReturnDetailWithStatusLogs() {
+            // Given: 订单存在，用户为发布人
+            Long orderId = 200L;
+            ErrandOrder order = buildOrder(orderId, "ER20240102001", USER_ID, null, 1L, 1);
+            order.setTitle("帮忙取快递");
+            order.setOrderDesc("测试订单描述");
+            order.setPickupAddress("取件点A");
+            order.setDeliveryAddress("送达点B");
+            order.setPickupLng(BigDecimal.valueOf(120.5));
+            order.setPickupLat(BigDecimal.valueOf(30.2));
+            order.setDeliveryLng(BigDecimal.valueOf(120.8));
+            order.setDeliveryLat(BigDecimal.valueOf(30.5));
+            order.setDistanceKm(BigDecimal.valueOf(2.5));
+            order.setBaseFee(BigDecimal.valueOf(3.00));
+            order.setDistanceFee(BigDecimal.valueOf(2));
+            order.setWeightFee(BigDecimal.ZERO);
+            order.setTimeFee(BigDecimal.ZERO);
+            order.setTipFee(BigDecimal.ZERO);
+            order.setOrderAmount(BigDecimal.valueOf(5));
+            order.setPlatformCommission(BigDecimal.ZERO);
+            order.setEstimatedRunnerIncome(BigDecimal.valueOf(5));
+            order.setPayStatus(0);
+            order.setSettlementStatus(0);
+            order.setDeadlineTime(LocalDateTime.now().plusHours(2));
+
+            when(errandOrderMapper.selectById(orderId)).thenReturn(order);
+
+            // 分类查询
+            ErrandCategory category = buildCategory(1L, "快递代取", BigDecimal.valueOf(3.00), null, 1);
+            when(errandCategoryMapper.selectById(1L)).thenReturn(category);
+
+            // 状态流转日志
+            OrderStatusLog log1 = buildStatusLog(1L, orderId, "ER20240102001",
+                    null, 0, "CREATE_ORDER", USER_ID, "STUDENT", LocalDateTime.now().minusHours(2));
+            OrderStatusLog log2 = buildStatusLog(2L, orderId, "ER20240102001",
+                    0, 1, "PAY_SUCCESS", 0L, "SYSTEM", LocalDateTime.now().minusHours(1));
+            List<OrderStatusLog> logs = Arrays.asList(log1, log2);
+
+            when(orderStatusLogMapper.selectList(any(LambdaQueryWrapper.class))).thenReturn(logs);
+
+            // When: 查询订单详情
+            OrderDetailVO detail = orderService.detail(orderId, USER_ID);
+
+            // Then: 验证详情字段
+            assertNotNull(detail, "订单详情不应为null");
+            assertEquals(orderId, detail.getId(), "订单ID应一致");
+            assertEquals("ER20240102001", detail.getOrderNo(), "订单编号应一致");
+            assertEquals(USER_ID, detail.getPublisherId(), "发布人ID应一致");
+            assertNull(detail.getRunnerId(), "接单人ID应为null");
+            assertEquals(Long.valueOf(1L), detail.getCategoryId(), "分类ID应一致");
+            assertEquals("快递代取", detail.getCategoryName(), "分类名称应正确");
+            assertEquals("帮忙取快递", detail.getTitle(), "标题应一致");
+            assertEquals(Integer.valueOf(1), detail.getOrderStatus(), "订单状态应一致");
+
+            // 验证状态流转日志
+            assertNotNull(detail.getStatusLogs(), "状态流转日志列表不应为null");
+            assertEquals(2, detail.getStatusLogs().size(), "应有2条状态日志");
+
+            // 验证第一条日志（创建订单）
+            OrderStatusLogVO logVO1 = detail.getStatusLogs().get(0);
+            assertEquals(Long.valueOf(1L), logVO1.getId(), "日志ID应一致");
+            assertEquals(orderId, logVO1.getOrderId(), "日志关联订单ID应一致");
+            assertNull(logVO1.getBeforeStatus(), "变更前状态应为null");
+            assertEquals(Integer.valueOf(0), logVO1.getAfterStatus(), "变更后状态应为UNPAID(0)");
+            assertEquals("CREATE_ORDER", logVO1.getTriggerAction(), "触发动作应为CREATE_ORDER");
+            assertEquals(USER_ID, logVO1.getOperatorUserId(), "操作人ID应为发布人");
+            assertEquals("STUDENT", logVO1.getOperatorRole(), "操作人角色应为STUDENT");
+
+            // 验证第二条日志（支付成功）
+            OrderStatusLogVO logVO2 = detail.getStatusLogs().get(1);
+            assertEquals(Long.valueOf(2L), logVO2.getId(), "日志ID应一致");
+            assertEquals(Integer.valueOf(0), logVO2.getBeforeStatus(), "变更前状态应为UNPAID(0)");
+            assertEquals(Integer.valueOf(1), logVO2.getAfterStatus(), "变更后状态应为WAITING_ACCEPT(1)");
+            assertEquals("PAY_SUCCESS", logVO2.getTriggerAction(), "触发动作应为PAY_SUCCESS");
+            assertEquals(Long.valueOf(0L), logVO2.getOperatorUserId(), "操作人ID应为0（系统）");
+            assertEquals("SYSTEM", logVO2.getOperatorRole(), "操作人角色应为SYSTEM");
+
+            // 验证 Mapper 调用
+            verify(errandOrderMapper).selectById(orderId);
+            verify(errandCategoryMapper).selectById(1L);
+            verify(orderStatusLogMapper).selectList(any(LambdaQueryWrapper.class));
+        }
+
+        /**
+         * 测试订单不存在时抛出异常
+         * <p>
+         * 当 {@code errandOrderMapper.selectById} 返回 null 时，
+         * 应抛出 {@link BusinessException} 且错误码为 {@link ErrorCode#ORDER_NOT_FOUND}。
+         * </p>
+         */
+        @Test
+        @DisplayName("订单不存在时应抛出 ORDER_NOT_FOUND 异常")
+        void shouldThrowWhenOrderNotFound() {
+            // Given: 订单不存在
+            Long orderId = 999L;
+            when(errandOrderMapper.selectById(orderId)).thenReturn(null);
+
+            // When & Then: 应抛出 BusinessException
+            BusinessException exception = assertThrows(BusinessException.class,
+                    () -> orderService.detail(orderId, USER_ID),
+                    "订单不存在时应抛出 BusinessException");
+
+            assertEquals(ErrorCode.ORDER_NOT_FOUND.getCode(), exception.getCode(),
+                    "错误码应为 ORDER_NOT_FOUND(5001)");
+            assertEquals(ErrorCode.ORDER_NOT_FOUND.getMessage(), exception.getMessage(),
+                    "错误信息应为: 订单不存在");
+
+            // 验证未执行后续查询
+            verify(errandOrderMapper).selectById(orderId);
+            verify(errandCategoryMapper, never()).selectById(anyLong());
+            verify(orderStatusLogMapper, never()).selectList(any(LambdaQueryWrapper.class));
+        }
+
+        /**
+         * 测试用户非订单所属人时抛出异常
+         * <p>
+         * 当订单的 {@code publisherId} 和 {@code runnerId} 均不等于当前用户ID时，
+         * 应抛出 {@link BusinessException} 且错误码为 {@link ErrorCode#ORDER_NOT_OWNED}。
+         * </p>
+         */
+        @Test
+        @DisplayName("用户非所属人时应抛出 ORDER_NOT_OWNED 异常")
+        void shouldThrowWhenNotOwner() {
+            // Given: 订单存在但发布人和接单人均不是当前用户
+            Long orderId = 200L;
+            ErrandOrder order = buildOrder(orderId, "ER20240102002", 2L, 3L, 1L, 1);
+            // publisherId=2, runnerId=3，USER_ID=1 都不是
+
+            when(errandOrderMapper.selectById(orderId)).thenReturn(order);
+
+            // When & Then: 应抛出 BusinessException
+            BusinessException exception = assertThrows(BusinessException.class,
+                    () -> orderService.detail(orderId, USER_ID),
+                    "用户非所属人时应抛出 BusinessException");
+
+            assertEquals(ErrorCode.ORDER_NOT_OWNED.getCode(), exception.getCode(),
+                    "错误码应为 ORDER_NOT_OWNED(5002)");
+            assertEquals(ErrorCode.ORDER_NOT_OWNED.getMessage(), exception.getMessage(),
+                    "错误信息应为: 无权操作该订单");
+
+            // 验证未执行后续查询
+            verify(errandOrderMapper).selectById(orderId);
+            verify(errandCategoryMapper, never()).selectById(anyLong());
+            verify(orderStatusLogMapper, never()).selectList(any(LambdaQueryWrapper.class));
+        }
+
+        /**
+         * 测试用户作为接单人（而非发布人）也可以查看订单详情
+         * <p>
+         * 当用户是订单的接单人（runnerId）时，所有权校验也应通过。
+         * 此额外测试确保发布人和接单人都能查看订单详情。
+         * </p>
+         */
+        @Test
+        @DisplayName("接单人也可查看订单详情")
+        void shouldAllowRunnerToViewDetail() {
+            // Given: 用户是接单人（runnerId=USER_ID），发布人是其他人
+            Long orderId = 300L;
+            ErrandOrder order = buildOrder(orderId, "ER20240103001", 5L, USER_ID, 1L, 2);
+            order.setTitle("代取文件");
+
+            when(errandOrderMapper.selectById(orderId)).thenReturn(order);
+
+            ErrandCategory category = buildCategory(1L, "文件代取", BigDecimal.valueOf(5.00), null, 1);
+            when(errandCategoryMapper.selectById(1L)).thenReturn(category);
+
+            List<OrderStatusLog> logs = new ArrayList<>();
+            when(orderStatusLogMapper.selectList(any(LambdaQueryWrapper.class))).thenReturn(logs);
+
+            // When: 接单人查看订单详情
+            OrderDetailVO detail = orderService.detail(orderId, USER_ID);
+
+            // Then: 验证成功返回详情
+            assertNotNull(detail, "接单人应能成功查看订单详情");
+            assertEquals(orderId, detail.getId(), "订单ID应一致");
+            assertEquals(USER_ID, detail.getRunnerId(), "接单人ID应为当前用户");
+            assertEquals("文件代取", detail.getCategoryName(), "分类名称应正确");
+            assertTrue(detail.getStatusLogs().isEmpty(), "状态日志应为空列表");
+
+            // 验证所有权校验通过后执行了完整查询
+            verify(errandOrderMapper).selectById(orderId);
+            verify(errandCategoryMapper).selectById(1L);
+            verify(orderStatusLogMapper).selectList(any(LambdaQueryWrapper.class));
+        }
+    }
+
+    // =========================================================================
+    // 辅助方法
+    // =========================================================================
+
+    /**
+     * 构建测试用分类对象
+     *
+     * @param id              分类ID
+     * @param categoryName    分类名称
+     * @param baseFee         基础费用
+     * @param distanceFeeRule 距离收费规则JSON
+     * @param categoryStatus  分类状态（1启用/2停用）
+     * @return 分类实体
+     */
+    private ErrandCategory buildCategory(Long id, String categoryName, BigDecimal baseFee,
+                                          String distanceFeeRule, Integer categoryStatus) {
+        ErrandCategory category = new ErrandCategory();
+        category.setId(id);
+        category.setCategoryName(categoryName);
+        category.setCategoryCode("CAT_" + id);
+        category.setBaseFee(baseFee);
+        category.setDistanceFeeRule(distanceFeeRule);
+        category.setCategoryStatus(categoryStatus);
+        return category;
+    }
+
+    /**
+     * 构建测试用订单对象
+     *
+     * @param id          订单ID
+     * @param orderNo     订单编号
+     * @param publisherId 发布人ID
+     * @param runnerId    接单人ID
+     * @param categoryId  分类ID
+     * @param orderStatus 订单状态
+     * @return 订单实体
+     */
+    private ErrandOrder buildOrder(Long id, String orderNo, Long publisherId, Long runnerId,
+                                    Long categoryId, Integer orderStatus) {
+        ErrandOrder order = new ErrandOrder();
+        order.setId(id);
+        order.setOrderNo(orderNo);
+        order.setPublisherId(publisherId);
+        order.setRunnerId(runnerId);
+        order.setCategoryId(categoryId);
+        order.setTitle("测试任务");
+        order.setOrderDesc("测试描述");
+        order.setPickupAddress("测试取件点");
+        order.setDeliveryAddress("测试送达点");
+        order.setDistanceKm(BigDecimal.valueOf(1.0));
+        order.setBaseFee(BigDecimal.valueOf(3.00));
+        order.setDistanceFee(BigDecimal.ZERO);
+        order.setWeightFee(BigDecimal.ZERO);
+        order.setTimeFee(BigDecimal.ZERO);
+        order.setTipFee(BigDecimal.ZERO);
+        order.setOrderAmount(BigDecimal.valueOf(3.00));
+        order.setPlatformCommission(BigDecimal.ZERO);
+        order.setEstimatedRunnerIncome(BigDecimal.valueOf(3.00));
+        order.setOrderStatus(orderStatus);
+        order.setPayStatus(0);
+        order.setSettlementStatus(0);
+        order.setCreateTime(LocalDateTime.now());
+        order.setUpdateTime(LocalDateTime.now());
+        return order;
+    }
+
+    /**
+     * 构建测试用订单状态流转日志对象
+     *
+     * @param id            日志ID
+     * @param orderId       订单ID
+     * @param orderNo       订单编号
+     * @param beforeStatus  变更前状态
+     * @param afterStatus   变更后状态
+     * @param triggerAction 触发动作
+     * @param operatorUserId 操作人ID
+     * @param operatorRole  操作人角色
+     * @param createTime    创建时间
+     * @return 状态流转日志实体
+     */
+    private OrderStatusLog buildStatusLog(Long id, Long orderId, String orderNo,
+                                           Integer beforeStatus, Integer afterStatus,
+                                           String triggerAction, Long operatorUserId,
+                                           String operatorRole, LocalDateTime createTime) {
+        OrderStatusLog log = new OrderStatusLog();
+        log.setId(id);
+        log.setOrderId(orderId);
+        log.setOrderNo(orderNo);
+        log.setBeforeStatus(beforeStatus);
+        log.setAfterStatus(afterStatus);
+        log.setTriggerAction(triggerAction);
+        log.setOperatorUserId(operatorUserId);
+        log.setOperatorRole(operatorRole);
+        log.setCreateTime(createTime);
+        return log;
+    }
+}
