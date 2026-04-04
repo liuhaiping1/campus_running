@@ -48,6 +48,7 @@ public enum ErrorCode {
     ORDER_CANNOT_CANCEL(5008, "当前状态不允许取消订单"),
     ORDER_CANNOT_ACCEPT(5009, "该订单不允许接单"),
     ORDER_CANNOT_EVALUATE(5010, "该订单不允许评价"),
+    ORDER_CANNOT_ACCEPT_SELF(5011, "不能接自己发布的订单"),
 
     // 评价错误 6xxx
     EVALUATION_ALREADY_EXISTS(6001, "该订单已评价"),

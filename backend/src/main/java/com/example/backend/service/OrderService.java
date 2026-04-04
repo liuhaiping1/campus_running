@@ -36,4 +36,21 @@ public interface OrderService {
      * @return 订单详情（含状态日志）
      */
     OrderDetailVO detail(Long orderId, Long userId);
+
+    /**
+     * 查询任务大厅（跑腿员可接的订单）
+     * @param userId    当前用户ID
+     * @param categoryId 分类筛选，可选
+     * @param pageNum   页码
+     * @param pageSize  每页大小
+     * @return 分页订单列表
+     */
+    IPage<OrderVO> hall(Long userId, Long categoryId, int pageNum, int pageSize);
+
+    /**
+     * 跑腿员接单
+     * @param orderId   订单ID
+     * @param runnerId  跑腿员ID
+     */
+    void accept(Long orderId, Long runnerId);
 }

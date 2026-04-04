@@ -52,6 +52,7 @@ public class SecurityConfig {
                 .requestMatchers("/api/admin/**").hasRole("ADMIN")
                 // 跑腿员接口需要RUNNER角色
                 .requestMatchers("/api/order/hall").hasRole("RUNNER")
+                .requestMatchers("/api/order/*/accept").hasRole("RUNNER")
                 // 其他接口需要认证
                 .anyRequest().authenticated()
             )

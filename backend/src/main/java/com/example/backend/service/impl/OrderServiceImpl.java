@@ -1,10 +1,12 @@
 package com.example.backend.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.core.toolkit.IdWorker;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.example.backend.common.ErrorCode;
+import com.example.backend.common.enums.AuthStatusEnum;
 import com.example.backend.common.enums.OrderStatusEnum;
 import com.example.backend.common.enums.PayStatusEnum;
 import com.example.backend.common.enums.SettlementStatusEnum;
@@ -13,9 +15,11 @@ import com.example.backend.dto.request.OrderCreateRequest;
 import com.example.backend.entity.ErrandCategory;
 import com.example.backend.entity.ErrandOrder;
 import com.example.backend.entity.OrderStatusLog;
+import com.example.backend.entity.RunnerAuth;
 import com.example.backend.mapper.ErrandCategoryMapper;
 import com.example.backend.mapper.ErrandOrderMapper;
 import com.example.backend.mapper.OrderStatusLogMapper;
+import com.example.backend.mapper.RunnerAuthMapper;
 import com.example.backend.service.OrderService;
 import com.example.backend.vo.OrderDetailVO;
 import com.example.backend.vo.OrderStatusLogVO;
@@ -26,6 +30,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.stream.Collectors;
@@ -38,10 +43,13 @@ public class OrderServiceImpl implements OrderService {
 
     private static final String CREATE_ORDER_ACTION = "CREATE_ORDER";
     private static final String OPERATOR_ROLE_STUDENT = "STUDENT";
+    private static final String ACCEPT_ORDER_ACTION = "ACCEPT_ORDER";
+    private static final String OPERATOR_ROLE_RUNNER = "RUNNER";
 
     private final ErrandOrderMapper errandOrderMapper;
     private final ErrandCategoryMapper errandCategoryMapper;
     private final OrderStatusLogMapper orderStatusLogMapper;
+    private final RunnerAuthMapper runnerAuthMapper;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     /**
@@ -49,10 +57,12 @@ public class OrderServiceImpl implements OrderService {
      */
     public OrderServiceImpl(ErrandOrderMapper errandOrderMapper,
                             ErrandCategoryMapper errandCategoryMapper,
-                            OrderStatusLogMapper orderStatusLogMapper) {
+                            OrderStatusLogMapper orderStatusLogMapper,
+                            RunnerAuthMapper runnerAuthMapper) {
         this.errandOrderMapper = errandOrderMapper;
         this.errandCategoryMapper = errandCategoryMapper;
         this.orderStatusLogMapper = orderStatusLogMapper;
+        this.runnerAuthMapper = runnerAuthMapper;
     }
 
     /**
@@ -268,6 +278,143 @@ public class OrderServiceImpl implements OrderService {
             throw e;
         } catch (Exception e) {
             throw new BusinessException(ErrorCode.CATEGORY_INVALID_FEE_RULE, "距离收费规则解析失败");
+        }
+    }
+
+    /**
+     * 查询任务大厅（跑腿员可接的订单）
+     * <p>
+     * 只展示满足以下条件的订单：
+     * <ul>
+     *   <li>orderStatus = 待接单状态（WAITING_ACCEPT）</li>
+     *   <li>payStatus = 已支付状态（PAID）</li>
+     *   <li>runnerId 为空（未被接单）</li>
+     *   <li>未逻辑删除</li>
+     * </ul>
+     * 同时校验当前用户是已认证跑腿员。
+     */
+    @Override
+    public IPage<OrderVO> hall(Long userId, Long categoryId, int pageNum, int pageSize) {
+        validateRunnerAuth(userId);
+
+        // 1. 构建查询条件：orderStatus=WAITING_ACCEPT, payStatus=PAID, runnerId=null
+        Page<ErrandOrder> pageParam = new Page<>(pageNum, pageSize);
+        LambdaQueryWrapper<ErrandOrder> wrapper = new LambdaQueryWrapper<>();
+        wrapper.eq(ErrandOrder::getOrderStatus, OrderStatusEnum.WAITING_ACCEPT.getCode())
+                .eq(ErrandOrder::getPayStatus, PayStatusEnum.PAID.getCode())
+                .isNull(ErrandOrder::getRunnerId);
+
+        // 3. 如 categoryId 不为空，添加 categoryId 筛选
+        if (categoryId != null) {
+            wrapper.eq(ErrandOrder::getCategoryId, categoryId);
+        }
+
+        wrapper.orderByDesc(ErrandOrder::getCreateTime);
+        Page<ErrandOrder> resultPage = errandOrderMapper.selectPage(pageParam, wrapper);
+
+        // 4. 分页查询并返回 OrderVO 列表
+        List<OrderVO> voList = new ArrayList<>();
+        for (ErrandOrder order : resultPage.getRecords()) {
+            ErrandCategory category = errandCategoryMapper.selectById(order.getCategoryId());
+            String categoryName = category != null ? category.getCategoryName() : null;
+            voList.add(OrderVO.from(order, categoryName));
+        }
+
+        Page<OrderVO> voPage = new Page<>(resultPage.getCurrent(), resultPage.getSize(), resultPage.getTotal());
+        voPage.setRecords(voList);
+        return voPage;
+    }
+
+    /**
+     * 跑腿员接单
+     * <p>
+     * 接单前校验：
+     * <ul>
+     *   <li>订单存在</li>
+     *   <li>订单未被接单（runnerId 为空）</li>
+     *   <li>订单已支付</li>
+     *   <li>订单状态允许接单（WAITING_ACCEPT）</li>
+     *   <li>不能接自己发布的订单</li>
+     * </ul>
+     * 接单成功后：
+     * <ul>
+     *   <li>设置 runnerId</li>
+     *   <li>orderStatus 更新为已接单（ACCEPTED）</li>
+     *   <li>acceptTime 设置当前时间</li>
+     *   <li>写入 order_status_log，triggerAction="ACCEPT_ORDER"，operatorRole="RUNNER"</li>
+     * </ul>
+     * 必须使用条件更新（LambdaQueryWrapper + update）防止并发抢单，不允许只查后 updateById。
+     */
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public void accept(Long orderId, Long runnerId) {
+        validateRunnerAuth(runnerId);
+
+        // 1. 查询订单，校验：存在、未被接单、已支付、状态允许接单、不是自己发布的
+        ErrandOrder order = errandOrderMapper.selectById(orderId);
+        if (order == null) {
+            throw new BusinessException(ErrorCode.ORDER_NOT_FOUND);
+        }
+        if (order.getRunnerId() != null) {
+            throw new BusinessException(ErrorCode.ORDER_ALREADY_ACCEPTED);
+        }
+        if (!PayStatusEnum.PAID.getCode().equals(order.getPayStatus())) {
+            throw new BusinessException(ErrorCode.ORDER_NOT_PAID);
+        }
+        if (!OrderStatusEnum.WAITING_ACCEPT.getCode().equals(order.getOrderStatus())) {
+            throw new BusinessException(ErrorCode.ORDER_CANNOT_ACCEPT);
+        }
+        if (runnerId.equals(order.getPublisherId())) {
+            throw new BusinessException(ErrorCode.ORDER_CANNOT_ACCEPT_SELF);
+        }
+
+        // 3. 使用条件更新：UPDATE errand_order SET runner_id=?, order_status=?, accept_time=?
+        //    WHERE id=? AND runner_id IS NULL AND order_status=? AND pay_status=?
+        UpdateWrapper<ErrandOrder> updateWrapper = new UpdateWrapper<>();
+        updateWrapper.eq("id", orderId)
+                .isNull("runner_id")
+                .eq("order_status", OrderStatusEnum.WAITING_ACCEPT.getCode())
+                .eq("pay_status", PayStatusEnum.PAID.getCode())
+                .set("runner_id", runnerId)
+                .set("order_status", OrderStatusEnum.ACCEPTED.getCode())
+                .set("accept_time", LocalDateTime.now());
+
+        int updatedRows = errandOrderMapper.update(null, updateWrapper);
+
+        // 4. 如果更新行数为0，抛出 ORDER_ALREADY_ACCEPTED 异常
+        if (updatedRows == 0) {
+            throw new BusinessException(ErrorCode.ORDER_ALREADY_ACCEPTED);
+        }
+
+        // 5. 写入 order_status_log（beforeStatus=WAITING_ACCEPT, afterStatus=ACCEPTED, triggerAction="ACCEPT_ORDER", operatorRole="RUNNER"）
+        OrderStatusLog statusLog = new OrderStatusLog();
+        statusLog.setOrderId(orderId);
+        statusLog.setOrderNo(order.getOrderNo());
+        statusLog.setBeforeStatus(OrderStatusEnum.WAITING_ACCEPT.getCode());
+        statusLog.setAfterStatus(OrderStatusEnum.ACCEPTED.getCode());
+        statusLog.setTriggerAction(ACCEPT_ORDER_ACTION);
+        statusLog.setOperatorUserId(runnerId);
+        statusLog.setOperatorRole(OPERATOR_ROLE_RUNNER);
+
+        orderStatusLogMapper.insert(statusLog);
+    }
+
+    /**
+     * 校验用户是否为已认证跑腿员
+     * <p>
+     * 查询 runner_auth 表，确认用户认证状态为 APPROVED 且为当前有效记录。
+     * 不通过时抛出 ORDER_HALL_ACCESS_DENIED 异常。
+     *
+     * @param userId 用户ID
+     */
+    private void validateRunnerAuth(Long userId) {
+        LambdaQueryWrapper<RunnerAuth> authWrapper = new LambdaQueryWrapper<>();
+        authWrapper.eq(RunnerAuth::getUserId, userId)
+                .eq(RunnerAuth::getAuthStatus, AuthStatusEnum.APPROVED.getCode())
+                .eq(RunnerAuth::getCurrentFlag, 1);
+        RunnerAuth runnerAuth = runnerAuthMapper.selectOne(authWrapper);
+        if (runnerAuth == null) {
+            throw new BusinessException(ErrorCode.ORDER_HALL_ACCESS_DENIED);
         }
     }
 }

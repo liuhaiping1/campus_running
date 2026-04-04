@@ -79,4 +79,34 @@ public class OrderController {
         OrderDetailVO detail = orderService.detail(id, loginUser.getUserId());
         return Result.success(detail);
     }
+
+    /**
+     * 查询任务大厅（跑腿员可接的订单）
+     * @param loginUser   当前登录用户（跑腿员）
+     * @param categoryId  分类筛选，可选
+     * @param pageNum     页码，默认1
+     * @param pageSize    每页大小，默认10
+     * @return 分页订单列表
+     */
+    @GetMapping("/hall")
+    public Result<IPage<OrderVO>> hall(@AuthenticationPrincipal LoginUser loginUser,
+                                       @RequestParam(required = false) Long categoryId,
+                                       @RequestParam(defaultValue = "1") int pageNum,
+                                       @RequestParam(defaultValue = "10") int pageSize) {
+        IPage<OrderVO> result = orderService.hall(loginUser.getUserId(), categoryId, pageNum, pageSize);
+        return Result.success(result);
+    }
+
+    /**
+     * 跑腿员接单
+     * @param id        订单ID
+     * @param loginUser 当前登录用户（跑腿员）
+     * @return 操作结果
+     */
+    @PostMapping("/{id}/accept")
+    public Result<Void> accept(@PathVariable Long id,
+                               @AuthenticationPrincipal LoginUser loginUser) {
+        orderService.accept(id, loginUser.getUserId());
+        return Result.success("接单成功", null);
+    }
 }

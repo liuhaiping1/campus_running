@@ -1,6 +1,7 @@
 package com.example.backend.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.example.backend.common.ErrorCode;
@@ -8,12 +9,15 @@ import com.example.backend.common.enums.OrderStatusEnum;
 import com.example.backend.common.enums.PayStatusEnum;
 import com.example.backend.common.exception.BusinessException;
 import com.example.backend.dto.request.OrderCreateRequest;
+import com.example.backend.common.enums.AuthStatusEnum;
 import com.example.backend.entity.ErrandCategory;
 import com.example.backend.entity.ErrandOrder;
 import com.example.backend.entity.OrderStatusLog;
+import com.example.backend.entity.RunnerAuth;
 import com.example.backend.mapper.ErrandCategoryMapper;
 import com.example.backend.mapper.ErrandOrderMapper;
 import com.example.backend.mapper.OrderStatusLogMapper;
+import com.example.backend.mapper.RunnerAuthMapper;
 import com.example.backend.service.impl.OrderServiceImpl;
 import com.example.backend.vo.OrderDetailVO;
 import com.example.backend.vo.OrderStatusLogVO;
@@ -73,6 +77,10 @@ class OrderServiceTest {
     /** Mock 订单状态流转日志 Mapper */
     @Mock
     private OrderStatusLogMapper orderStatusLogMapper;
+
+    /** Mock 跑腿认证 Mapper */
+    @Mock
+    private RunnerAuthMapper runnerAuthMapper;
 
     /** 自动注入 Mock 依赖的被测对象 */
     @InjectMocks
@@ -720,6 +728,408 @@ class OrderServiceTest {
     }
 
     // =========================================================================
+    // 任务大厅测试组
+    // =========================================================================
+
+    /**
+     * 任务大厅功能测试组
+     * <p>
+     * 覆盖任务大厅的三种核心场景：
+     * <ol>
+     *   <li>已认证跑腿员查询大厅成功 —— 返回符合条件的订单列表</li>
+     *   <li>未认证用户查询大厅失败 —— 抛出 ORDER_HALL_ACCESS_DENIED 异常</li>
+     *   <li>大厅按分类筛选 —— 仅返回指定分类的待接单订单</li>
+     * </ol>
+     */
+    @Nested
+    @DisplayName("任务大厅")
+    class HallTests {
+
+        /**
+         * 测试已认证跑腿员查询大厅成功
+         * <p>
+         * 验证点：
+         * <ul>
+         *   <li>RunnerAuth 查询返回认证通过记录（authStatus=1, currentFlag=1）</li>
+         *   <li>订单查询返回满足条件的订单（orderStatus=WAITING_ACCEPT, payStatus=PAID, runnerId=null）</li>
+         *   <li>返回分页结果，分类名称正确填充</li>
+         * </ul>
+         */
+        @Test
+        @DisplayName("已认证跑腿员查询大厅成功")
+        void shouldReturnHallOrdersForApprovedRunner() {
+            // Given: 用户是已认证跑腿员
+            Long runnerId = 2L;
+            when(runnerAuthMapper.selectOne(any(LambdaQueryWrapper.class)))
+                    .thenReturn(buildRunnerAuth(runnerId, AuthStatusEnum.APPROVED.getCode(), 1));
+
+            // 构建待接单订单
+            ErrandOrder waitingOrder = buildOrder(1L, "ER20240105001", 1L, null, 1L,
+                    OrderStatusEnum.WAITING_ACCEPT.getCode());
+            waitingOrder.setPayStatus(PayStatusEnum.PAID.getCode());
+            Page<ErrandOrder> orderPage = new Page<>(1, 10);
+            orderPage.setRecords(Collections.singletonList(waitingOrder));
+            orderPage.setTotal(1);
+
+            when(errandOrderMapper.selectPage(any(Page.class), any(LambdaQueryWrapper.class)))
+                    .thenReturn(orderPage);
+
+            ErrandCategory category = buildCategory(1L, "快递代取", BigDecimal.valueOf(3.00), null, 1);
+            when(errandCategoryMapper.selectById(1L)).thenReturn(category);
+
+            // When: 查询任务大厅
+            IPage<OrderVO> result = orderService.hall(runnerId, null, 1, 10);
+
+            // Then: 验证分页结果
+            assertNotNull(result, "返回结果不应为null");
+            assertEquals(1, result.getTotal(), "总数应为1");
+            assertEquals(1, result.getRecords().size(), "记录数应为1");
+
+            OrderVO vo = result.getRecords().get(0);
+            assertEquals(Long.valueOf(1L), vo.getId(), "订单ID应一致");
+            assertEquals("ER20240105001", vo.getOrderNo(), "订单编号应一致");
+            assertEquals("快递代取", vo.getCategoryName(), "分类名称应正确");
+
+            // 验证 RunnerAuth 查询
+            verify(runnerAuthMapper).selectOne(any(LambdaQueryWrapper.class));
+            // 验证订单分页查询
+            verify(errandOrderMapper).selectPage(any(Page.class), any(LambdaQueryWrapper.class));
+        }
+
+        /**
+         * 测试未认证用户查询大厅失败
+         * <p>
+         * 当用户未申请跑腿认证或认证未通过时，应抛出 BusinessException，
+         * 错误码为 ORDER_HALL_ACCESS_DENIED(5007)。
+         */
+        @Test
+        @DisplayName("未认证用户查询大厅失败")
+        void shouldThrowWhenUserNotApprovedRunner() {
+            // Given: 用户未认证（RunnerAuth 查询返回 null）
+            Long userId = 3L;
+            when(runnerAuthMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(null);
+
+            // When & Then: 应抛出 BusinessException
+            BusinessException exception = assertThrows(BusinessException.class,
+                    () -> orderService.hall(userId, null, 1, 10),
+                    "未认证用户查询大厅应抛出 BusinessException");
+
+            assertEquals(ErrorCode.ORDER_HALL_ACCESS_DENIED.getCode(), exception.getCode(),
+                    "错误码应为 ORDER_HALL_ACCESS_DENIED(5007)");
+            assertEquals(ErrorCode.ORDER_HALL_ACCESS_DENIED.getMessage(), exception.getMessage(),
+                    "错误信息应为: 任务大厅仅对跑腿员开放");
+
+            // 验证未执行后续订单查询
+            verify(errandOrderMapper, never()).selectPage(any(Page.class), any(LambdaQueryWrapper.class));
+        }
+
+        /**
+         * 测试大厅按分类筛选
+         * <p>
+         * 当传入 categoryId 时，仅返回该分类的待接单订单。
+         */
+        @Test
+        @DisplayName("大厅应按分类筛选")
+        void shouldFilterByCategoryId() {
+            // Given: 用户是已认证跑腿员
+            Long runnerId = 2L;
+            when(runnerAuthMapper.selectOne(any(LambdaQueryWrapper.class)))
+                    .thenReturn(buildRunnerAuth(runnerId, AuthStatusEnum.APPROVED.getCode(), 1));
+
+            Long categoryId = 5L;
+            ErrandOrder waitingOrder = buildOrder(2L, "ER20240105002", 1L, null, categoryId,
+                    OrderStatusEnum.WAITING_ACCEPT.getCode());
+            waitingOrder.setPayStatus(PayStatusEnum.PAID.getCode());
+
+            Page<ErrandOrder> orderPage = new Page<>(1, 10);
+            orderPage.setRecords(Collections.singletonList(waitingOrder));
+            orderPage.setTotal(1);
+
+            when(errandOrderMapper.selectPage(any(Page.class), any(LambdaQueryWrapper.class)))
+                    .thenReturn(orderPage);
+
+            ErrandCategory category = buildCategory(categoryId, "文件代取", BigDecimal.valueOf(5.00), null, 1);
+            when(errandCategoryMapper.selectById(categoryId)).thenReturn(category);
+
+            // When: 查询指定分类的任务大厅
+            IPage<OrderVO> result = orderService.hall(runnerId, categoryId, 1, 10);
+
+            // Then: 验证仅返回指定分类的订单
+            assertNotNull(result, "返回结果不应为null");
+            assertEquals(1, result.getTotal(), "总数应为1");
+            assertEquals(1, result.getRecords().size(), "记录数应为1");
+            assertEquals(categoryId, result.getRecords().get(0).getCategoryId(), "分类ID应一致");
+            assertEquals("文件代取", result.getRecords().get(0).getCategoryName(), "分类名称应正确");
+        }
+    }
+
+    // =========================================================================
+    // 接单功能测试组
+    // =========================================================================
+
+    /**
+     * 接单功能测试组
+     * <p>
+     * 覆盖接单功能的六种核心场景：
+     * <ol>
+     *   <li>接单成功 —— 更新订单状态并写入状态日志</li>
+     *   <li>订单不存在失败</li>
+     *   <li>未支付订单不能接</li>
+     *   <li>已被接单订单不能重复接</li>
+     *   <li>不能接自己发布的订单</li>
+     *   <li>接单成功后写入状态日志</li>
+     * </ol>
+     */
+    @Nested
+    @DisplayName("接单功能")
+    class AcceptOrderTests {
+
+        /**
+         * 测试接单成功
+         * <p>
+         * 验证点：
+         * <ul>
+         *   <li>RunnerAuth 查询返回认证通过记录</li>
+         *   <li>订单查询返回满足接单条件的订单</li>
+         *   <li>条件更新成功（runnerId, orderStatus=ACCEPTED, acceptTime）</li>
+         *   <li>更新条件包含 pay_status=PAID，防止并发状态下支付状态变化导致的问题</li>
+         *   <li>写入状态流转日志（beforeStatus=WAITING_ACCEPT, afterStatus=ACCEPTED, triggerAction=ACCEPT_ORDER, operatorRole=RUNNER）</li>
+         * </ul>
+         */
+        @Test
+        @DisplayName("接单成功")
+        void shouldAcceptOrderSuccessfully() {
+            // Given: 跑腿员已认证，订单满足接单条件
+            Long runnerId = 2L;
+            Long orderId = 100L;
+
+            when(runnerAuthMapper.selectOne(any(LambdaQueryWrapper.class)))
+                    .thenReturn(buildRunnerAuth(runnerId, AuthStatusEnum.APPROVED.getCode(), 1));
+
+            ErrandOrder order = buildOrder(orderId, "ER20240106001", 1L, null, 1L,
+                    OrderStatusEnum.WAITING_ACCEPT.getCode());
+            order.setPayStatus(PayStatusEnum.PAID.getCode());
+            when(errandOrderMapper.selectById(orderId)).thenReturn(order);
+
+            doReturn(1).when(errandOrderMapper).update(any(), any());
+            when(orderStatusLogMapper.insert(any(OrderStatusLog.class))).thenReturn(1);
+
+            // When: 执行接单
+            orderService.accept(orderId, runnerId);
+
+            // Then: 验证订单更新条件包含 pay_status=PAID
+            @SuppressWarnings("unchecked")
+            ArgumentCaptor<UpdateWrapper<ErrandOrder>> wrapperCaptor = ArgumentCaptor.forClass(UpdateWrapper.class);
+            verify(errandOrderMapper).update(any(), wrapperCaptor.capture());
+
+            UpdateWrapper<ErrandOrder> capturedWrapper = wrapperCaptor.getValue();
+            String sql = capturedWrapper.getSqlSegment();
+            assertTrue(sql.contains("pay_status"), "更新条件应包含 pay_status");
+            assertTrue(sql.contains("runner_id"), "更新条件应包含 runner_id");
+            assertTrue(sql.contains("order_status"), "更新条件应包含 order_status");
+
+            // 验证状态日志写入
+            ArgumentCaptor<OrderStatusLog> logCaptor = ArgumentCaptor.forClass(OrderStatusLog.class);
+            verify(orderStatusLogMapper).insert(logCaptor.capture());
+            OrderStatusLog statusLog = logCaptor.getValue();
+
+            assertEquals(orderId, statusLog.getOrderId(), "日志关联的订单ID应一致");
+            assertEquals("ER20240106001", statusLog.getOrderNo(), "日志中的订单编号应一致");
+            assertEquals(OrderStatusEnum.WAITING_ACCEPT.getCode(), statusLog.getBeforeStatus(),
+                    "变更前状态应为 WAITING_ACCEPT(1)");
+            assertEquals(OrderStatusEnum.ACCEPTED.getCode(), statusLog.getAfterStatus(),
+                    "变更后状态应为 ACCEPTED(2)");
+            assertEquals("ACCEPT_ORDER", statusLog.getTriggerAction(), "触发动作应为 ACCEPT_ORDER");
+            assertEquals(runnerId, statusLog.getOperatorUserId(), "操作人ID应为接单人ID");
+            assertEquals("RUNNER", statusLog.getOperatorRole(), "操作人角色应为 RUNNER");
+        }
+
+        /**
+         * 测试订单不存在失败
+         * <p>
+         * 当 errandOrderMapper.selectById 返回 null 时，
+         * 应抛出 BusinessException，错误码为 ORDER_NOT_FOUND(5001)。
+         */
+        @Test
+        @DisplayName("订单不存在失败")
+        void shouldThrowWhenOrderNotFound() {
+            // Given: 跑腿员已认证，但订单不存在
+            Long runnerId = 2L;
+            Long orderId = 999L;
+
+            when(runnerAuthMapper.selectOne(any(LambdaQueryWrapper.class)))
+                    .thenReturn(buildRunnerAuth(runnerId, AuthStatusEnum.APPROVED.getCode(), 1));
+            when(errandOrderMapper.selectById(orderId)).thenReturn(null);
+
+            // When & Then: 应抛出 BusinessException
+            BusinessException exception = assertThrows(BusinessException.class,
+                    () -> orderService.accept(orderId, runnerId),
+                    "订单不存在时应抛出 BusinessException");
+
+            assertEquals(ErrorCode.ORDER_NOT_FOUND.getCode(), exception.getCode(),
+                    "错误码应为 ORDER_NOT_FOUND(5001)");
+            assertEquals(ErrorCode.ORDER_NOT_FOUND.getMessage(), exception.getMessage(),
+                    "错误信息应为: 订单不存在");
+
+            // 验证未执行更新操作
+            verify(errandOrderMapper, never()).update(any(), any());
+            verify(orderStatusLogMapper, never()).insert(any(OrderStatusLog.class));
+        }
+
+        /**
+         * 测试未支付订单不能接
+         * <p>
+         * 当订单 payStatus != PAID 时，应抛出 BusinessException，
+         * 错误码为 ORDER_NOT_PAID(5005)。
+         */
+        @Test
+        @DisplayName("未支付订单不能接")
+        void shouldThrowWhenOrderNotPaid() {
+            // Given: 跑腿员已认证，订单存在但未支付
+            Long runnerId = 2L;
+            Long orderId = 100L;
+
+            when(runnerAuthMapper.selectOne(any(LambdaQueryWrapper.class)))
+                    .thenReturn(buildRunnerAuth(runnerId, AuthStatusEnum.APPROVED.getCode(), 1));
+
+            ErrandOrder order = buildOrder(orderId, "ER20240106002", 1L, null, 1L,
+                    OrderStatusEnum.WAITING_ACCEPT.getCode());
+            order.setPayStatus(PayStatusEnum.UNPAID.getCode()); // 未支付
+            when(errandOrderMapper.selectById(orderId)).thenReturn(order);
+
+            // When & Then: 应抛出 BusinessException
+            BusinessException exception = assertThrows(BusinessException.class,
+                    () -> orderService.accept(orderId, runnerId),
+                    "未支付订单应抛出 BusinessException");
+
+            assertEquals(ErrorCode.ORDER_NOT_PAID.getCode(), exception.getCode(),
+                    "错误码应为 ORDER_NOT_PAID(5005)");
+            assertEquals(ErrorCode.ORDER_NOT_PAID.getMessage(), exception.getMessage(),
+                    "错误信息应为: 订单未支付");
+
+            // 验证未执行更新操作
+            verify(errandOrderMapper, never()).update(any(), any());
+            verify(orderStatusLogMapper, never()).insert(any(OrderStatusLog.class));
+        }
+
+        /**
+         * 测试已被接单订单不能重复接
+         * <p>
+         * 当订单 runnerId != null 时（已被接单），
+         * 应抛出 BusinessException，错误码为 ORDER_ALREADY_ACCEPTED(5006)。
+         */
+        @Test
+        @DisplayName("已被接单订单不能重复接")
+        void shouldThrowWhenOrderAlreadyAccepted() {
+            // Given: 跑腿员已认证，订单已被其他跑腿员接单
+            Long runnerId = 2L;
+            Long orderId = 100L;
+
+            when(runnerAuthMapper.selectOne(any(LambdaQueryWrapper.class)))
+                    .thenReturn(buildRunnerAuth(runnerId, AuthStatusEnum.APPROVED.getCode(), 1));
+
+            ErrandOrder order = buildOrder(orderId, "ER20240106003", 1L, 3L, 1L,
+                    OrderStatusEnum.WAITING_ACCEPT.getCode()); // runnerId=3 已被接单
+            order.setPayStatus(PayStatusEnum.PAID.getCode());
+            when(errandOrderMapper.selectById(orderId)).thenReturn(order);
+
+            // When & Then: 应抛出 BusinessException
+            BusinessException exception = assertThrows(BusinessException.class,
+                    () -> orderService.accept(orderId, runnerId),
+                    "已被接单订单应抛出 BusinessException");
+
+            assertEquals(ErrorCode.ORDER_ALREADY_ACCEPTED.getCode(), exception.getCode(),
+                    "错误码应为 ORDER_ALREADY_ACCEPTED(5006)");
+            assertEquals(ErrorCode.ORDER_ALREADY_ACCEPTED.getMessage(), exception.getMessage(),
+                    "错误信息应为: 订单已被接单");
+
+            // 验证未执行更新操作
+            verify(errandOrderMapper, never()).update(any(), any());
+            verify(orderStatusLogMapper, never()).insert(any(OrderStatusLog.class));
+        }
+
+        /**
+         * 测试不能接自己发布的订单
+         * <p>
+         * 当订单 publisherId == runnerId 时（自己发布的订单），
+         * 应抛出 BusinessException，错误码为 ORDER_CANNOT_ACCEPT_SELF(5011)。
+         */
+        @Test
+        @DisplayName("不能接自己发布的订单")
+        void shouldThrowWhenAcceptSelfOrder() {
+            // Given: 跑腿员已认证，但尝试接自己发布的订单
+            Long runnerId = 2L;
+            Long orderId = 100L;
+
+            when(runnerAuthMapper.selectOne(any(LambdaQueryWrapper.class)))
+                    .thenReturn(buildRunnerAuth(runnerId, AuthStatusEnum.APPROVED.getCode(), 1));
+
+            ErrandOrder order = buildOrder(orderId, "ER20240106004", runnerId, null, 1L,
+                    OrderStatusEnum.WAITING_ACCEPT.getCode()); // publisherId = runnerId 自己发布
+            order.setPayStatus(PayStatusEnum.PAID.getCode());
+            when(errandOrderMapper.selectById(orderId)).thenReturn(order);
+
+            // When & Then: 应抛出 BusinessException
+            BusinessException exception = assertThrows(BusinessException.class,
+                    () -> orderService.accept(orderId, runnerId),
+                    "不能接自己发布的订单");
+
+            assertEquals(ErrorCode.ORDER_CANNOT_ACCEPT_SELF.getCode(), exception.getCode(),
+                    "错误码应为 ORDER_CANNOT_ACCEPT_SELF(5011)");
+            assertEquals(ErrorCode.ORDER_CANNOT_ACCEPT_SELF.getMessage(), exception.getMessage(),
+                    "错误信息应为: 不能接自己发布的订单");
+
+            // 验证未执行更新操作
+            verify(errandOrderMapper, never()).update(any(), any());
+            verify(orderStatusLogMapper, never()).insert(any(OrderStatusLog.class));
+        }
+
+        /**
+         * 测试接单成功后写入状态日志
+         * <p>
+         * 验证 accept() 方法正确写入 order_status_log，
+         * beforeStatus=WAITING_ACCEPT(1), afterStatus=ACCEPTED(2),
+         * triggerAction="ACCEPT_ORDER", operatorRole="RUNNER"。
+         */
+        @Test
+        @DisplayName("接单成功后写入状态日志")
+        void shouldWriteStatusLogWhenAcceptSuccess() {
+            // Given: 接单成功的前置条件
+            Long runnerId = 2L;
+            Long orderId = 100L;
+
+            when(runnerAuthMapper.selectOne(any(LambdaQueryWrapper.class)))
+                    .thenReturn(buildRunnerAuth(runnerId, AuthStatusEnum.APPROVED.getCode(), 1));
+
+            ErrandOrder order = buildOrder(orderId, "ER20240106005", 1L, null, 1L,
+                    OrderStatusEnum.WAITING_ACCEPT.getCode());
+            order.setPayStatus(PayStatusEnum.PAID.getCode());
+            when(errandOrderMapper.selectById(orderId)).thenReturn(order);
+
+            doReturn(1).when(errandOrderMapper).update(any(), any());
+            when(orderStatusLogMapper.insert(any(OrderStatusLog.class))).thenReturn(1);
+
+            // When: 执行接单
+            orderService.accept(orderId, runnerId);
+
+            // Then: 验证状态日志内容
+            ArgumentCaptor<OrderStatusLog> logCaptor = ArgumentCaptor.forClass(OrderStatusLog.class);
+            verify(orderStatusLogMapper).insert(logCaptor.capture());
+            OrderStatusLog statusLog = logCaptor.getValue();
+
+            assertEquals(orderId, statusLog.getOrderId(), "订单ID应一致");
+            assertEquals("ER20240106005", statusLog.getOrderNo(), "订单编号应一致");
+            assertEquals(Integer.valueOf(1), statusLog.getBeforeStatus(),
+                    "变更前状态应为 WAITING_ACCEPT(1)");
+            assertEquals(Integer.valueOf(2), statusLog.getAfterStatus(),
+                    "变更后状态应为 ACCEPTED(2)");
+            assertEquals("ACCEPT_ORDER", statusLog.getTriggerAction(), "触发动作应为 ACCEPT_ORDER");
+            assertEquals(runnerId, statusLog.getOperatorUserId(), "操作人ID应为接单人");
+            assertEquals("RUNNER", statusLog.getOperatorRole(), "操作人角色应为 RUNNER");
+        }
+    }
+
+    // =========================================================================
     // 辅助方法
     // =========================================================================
 
@@ -814,5 +1224,28 @@ class OrderServiceTest {
         log.setOperatorRole(operatorRole);
         log.setCreateTime(createTime);
         return log;
+    }
+
+    /**
+     * 构建测试用跑腿认证对象
+     *
+     * @param userId       用户ID
+     * @param authStatus   认证状态（1通过/0待审/2驳回/3失效）
+     * @param currentFlag  当前标识（1当前提交记录/0历史记录）
+     * @return 跑腿认证实体
+     */
+    private RunnerAuth buildRunnerAuth(Long userId, Integer authStatus, Integer currentFlag) {
+        RunnerAuth auth = new RunnerAuth();
+        auth.setId(1L);
+        auth.setUserId(userId);
+        auth.setAuthStatus(authStatus);
+        auth.setCurrentFlag(currentFlag);
+        auth.setAuthBatchNo("AUTH_" + System.currentTimeMillis());
+        auth.setStudentNo("20240001");
+        auth.setSchoolName("测试学校");
+        auth.setCampusName("测试校区");
+        auth.setCertType(1);
+        auth.setCertNo("123456789012345678");
+        return auth;
     }
 }
