@@ -9,16 +9,20 @@ import com.example.backend.common.ErrorCode;
 import com.example.backend.common.enums.AuthStatusEnum;
 import com.example.backend.common.enums.OrderStatusEnum;
 import com.example.backend.common.enums.PayStatusEnum;
+import com.example.backend.common.enums.RefundStatusEnum;
 import com.example.backend.common.enums.SettlementStatusEnum;
 import com.example.backend.common.exception.BusinessException;
+import com.example.backend.dto.request.OrderCancelRequest;
 import com.example.backend.dto.request.OrderCreateRequest;
 import com.example.backend.entity.ErrandCategory;
 import com.example.backend.entity.ErrandOrder;
 import com.example.backend.entity.OrderStatusLog;
+import com.example.backend.entity.RefundRecord;
 import com.example.backend.entity.RunnerAuth;
 import com.example.backend.mapper.ErrandCategoryMapper;
 import com.example.backend.mapper.ErrandOrderMapper;
 import com.example.backend.mapper.OrderStatusLogMapper;
+import com.example.backend.mapper.RefundRecordMapper;
 import com.example.backend.mapper.RunnerAuthMapper;
 import com.example.backend.service.OrderService;
 import com.example.backend.vo.OrderDetailVO;
@@ -33,6 +37,7 @@ import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 
 /**
@@ -45,11 +50,27 @@ public class OrderServiceImpl implements OrderService {
     private static final String OPERATOR_ROLE_STUDENT = "STUDENT";
     private static final String ACCEPT_ORDER_ACTION = "ACCEPT_ORDER";
     private static final String OPERATOR_ROLE_RUNNER = "RUNNER";
+    private static final String CONTACT_ORDER_ACTION = "CONTACT_ORDER";
+    private static final String PICKUP_ORDER_ACTION = "PICKUP_ORDER";
+    private static final String DELIVER_ORDER_ACTION = "DELIVER_ORDER";
+    private static final String COMPLETE_ORDER_ACTION = "COMPLETE_ORDER";
+    private static final String CANCEL_ORDER_ACTION = "CANCEL_ORDER";
+
+    /**
+     * 状态码到时间字段名的映射，用于条件更新时设置对应时间戳
+     */
+    private static final Map<Integer, String> STATUS_TIME_FIELD_MAP = Map.of(
+            OrderStatusEnum.CONTACTED.getCode(), "contact_time",
+            OrderStatusEnum.PICKED_UP.getCode(), "pickup_time",
+            OrderStatusEnum.DELIVERED.getCode(), "deliver_time",
+            OrderStatusEnum.COMPLETED.getCode(), "complete_time"
+    );
 
     private final ErrandOrderMapper errandOrderMapper;
     private final ErrandCategoryMapper errandCategoryMapper;
     private final OrderStatusLogMapper orderStatusLogMapper;
     private final RunnerAuthMapper runnerAuthMapper;
+    private final RefundRecordMapper refundRecordMapper;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     /**
@@ -58,11 +79,13 @@ public class OrderServiceImpl implements OrderService {
     public OrderServiceImpl(ErrandOrderMapper errandOrderMapper,
                             ErrandCategoryMapper errandCategoryMapper,
                             OrderStatusLogMapper orderStatusLogMapper,
-                            RunnerAuthMapper runnerAuthMapper) {
+                            RunnerAuthMapper runnerAuthMapper,
+                            RefundRecordMapper refundRecordMapper) {
         this.errandOrderMapper = errandOrderMapper;
         this.errandCategoryMapper = errandCategoryMapper;
         this.orderStatusLogMapper = orderStatusLogMapper;
         this.runnerAuthMapper = runnerAuthMapper;
+        this.refundRecordMapper = refundRecordMapper;
     }
 
     /**
@@ -400,12 +423,174 @@ public class OrderServiceImpl implements OrderService {
     }
 
     /**
-     * 校验用户是否为已认证跑腿员
+     * 跑腿员联系用户（已接单 → 已联系用户）
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public void contact(Long orderId, Long runnerId) {
+        ErrandOrder order = errandOrderMapper.selectById(orderId);
+        if (order == null) {
+            throw new BusinessException(ErrorCode.ORDER_NOT_FOUND);
+        }
+        if (!runnerId.equals(order.getRunnerId())) {
+            throw new BusinessException(ErrorCode.ORDER_NOT_OWNED);
+        }
+        updateOrderStatus(orderId, OrderStatusEnum.ACCEPTED.getCode(), OrderStatusEnum.CONTACTED.getCode(),
+                runnerId, "runner_id", LocalDateTime.now());
+        insertStatusLog(orderId, order.getOrderNo(),
+                OrderStatusEnum.ACCEPTED.getCode(), OrderStatusEnum.CONTACTED.getCode(),
+                CONTACT_ORDER_ACTION, runnerId, OPERATOR_ROLE_RUNNER);
+    }
+
+    /**
+     * 跑腿员取件（已联系用户 → 已取件）
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public void pickup(Long orderId, Long runnerId) {
+        ErrandOrder order = errandOrderMapper.selectById(orderId);
+        if (order == null) {
+            throw new BusinessException(ErrorCode.ORDER_NOT_FOUND);
+        }
+        if (!runnerId.equals(order.getRunnerId())) {
+            throw new BusinessException(ErrorCode.ORDER_NOT_OWNED);
+        }
+        updateOrderStatus(orderId, OrderStatusEnum.CONTACTED.getCode(), OrderStatusEnum.PICKED_UP.getCode(),
+                runnerId, "runner_id", LocalDateTime.now());
+        insertStatusLog(orderId, order.getOrderNo(),
+                OrderStatusEnum.CONTACTED.getCode(), OrderStatusEnum.PICKED_UP.getCode(),
+                PICKUP_ORDER_ACTION, runnerId, OPERATOR_ROLE_RUNNER);
+    }
+
+    /**
+     * 跑腿员送达（已取件 → 已送达）
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public void deliver(Long orderId, Long runnerId) {
+        ErrandOrder order = errandOrderMapper.selectById(orderId);
+        if (order == null) {
+            throw new BusinessException(ErrorCode.ORDER_NOT_FOUND);
+        }
+        if (!runnerId.equals(order.getRunnerId())) {
+            throw new BusinessException(ErrorCode.ORDER_NOT_OWNED);
+        }
+        updateOrderStatus(orderId, OrderStatusEnum.PICKED_UP.getCode(), OrderStatusEnum.DELIVERED.getCode(),
+                runnerId, "runner_id", LocalDateTime.now());
+        insertStatusLog(orderId, order.getOrderNo(),
+                OrderStatusEnum.PICKED_UP.getCode(), OrderStatusEnum.DELIVERED.getCode(),
+                DELIVER_ORDER_ACTION, runnerId, OPERATOR_ROLE_RUNNER);
+    }
+
+    /**
+     * 用户确认完成（已送达 → 已完成）
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public void complete(Long orderId, Long userId) {
+        ErrandOrder order = errandOrderMapper.selectById(orderId);
+        if (order == null) {
+            throw new BusinessException(ErrorCode.ORDER_NOT_FOUND);
+        }
+        if (!userId.equals(order.getPublisherId())) {
+            throw new BusinessException(ErrorCode.ORDER_NOT_OWNED);
+        }
+        updateOrderStatus(orderId, OrderStatusEnum.DELIVERED.getCode(), OrderStatusEnum.COMPLETED.getCode(),
+                userId, "publisher_id", LocalDateTime.now());
+        insertStatusLog(orderId, order.getOrderNo(),
+                OrderStatusEnum.DELIVERED.getCode(), OrderStatusEnum.COMPLETED.getCode(),
+                COMPLETE_ORDER_ACTION, userId, OPERATOR_ROLE_STUDENT);
+    }
+
+    /**
+     * 取消订单
      * <p>
-     * 查询 runner_auth 表，确认用户认证状态为 APPROVED 且为当前有效记录。
-     * 不通过时抛出 ORDER_HALL_ACCESS_DENIED 异常。
-     *
-     * @param userId 用户ID
+     * 发布人或跑腿员可取消订单，取消后订单不可再操作。
+     * 已支付订单取消后创建退款记录（不做真实退款）。
+     * </p>
+     * 取消规则：
+     * <ul>
+     *   <li>发布人可取消：UNPAID、WAITING_ACCEPT、ACCEPTED、CONTACTED、PICKED_UP</li>
+     *   <li>跑腿员可取消：ACCEPTED、CONTACTED、PICKED_UP</li>
+     *   <li>DELIVERED、COMPLETED、CANCELLED、APPEALING 不可取消</li>
+     * </ul>
+     */
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public void cancel(Long orderId, Long userId, OrderCancelRequest request) {
+        // 1. 查询订单
+        ErrandOrder order = errandOrderMapper.selectById(orderId);
+        if (order == null) {
+            throw new BusinessException(ErrorCode.ORDER_NOT_FOUND);
+        }
+
+        // 2. 校验权限：发布人或跑腿员
+        boolean isPublisher = userId.equals(order.getPublisherId());
+        boolean isRunner = userId.equals(order.getRunnerId());
+        if (!isPublisher && !isRunner) {
+            throw new BusinessException(ErrorCode.ORDER_NOT_OWNED);
+        }
+
+        // 3. 校验取消状态
+        Integer currentStatus = order.getOrderStatus();
+        if (isPublisher) {
+            // 发布人：UNPAID(0)、WAITING_ACCEPT(1)、ACCEPTED(2)、CONTACTED(3)、PICKED_UP(4) 可取消
+            if (currentStatus.equals(OrderStatusEnum.UNPAID.getCode()) ||
+                currentStatus.equals(OrderStatusEnum.WAITING_ACCEPT.getCode()) ||
+                currentStatus.equals(OrderStatusEnum.ACCEPTED.getCode()) ||
+                currentStatus.equals(OrderStatusEnum.CONTACTED.getCode()) ||
+                currentStatus.equals(OrderStatusEnum.PICKED_UP.getCode())) {
+                // 可取消
+            } else {
+                throw new BusinessException(ErrorCode.ORDER_CANNOT_CANCEL);
+            }
+        } else {
+            // 跑腿员：ACCEPTED(2)、CONTACTED(3)、PICKED_UP(4) 可取消
+            if (currentStatus.equals(OrderStatusEnum.ACCEPTED.getCode()) ||
+                currentStatus.equals(OrderStatusEnum.CONTACTED.getCode()) ||
+                currentStatus.equals(OrderStatusEnum.PICKED_UP.getCode())) {
+                // 可取消
+            } else {
+                throw new BusinessException(ErrorCode.ORDER_CANNOT_CANCEL);
+            }
+        }
+
+        // 4. 条件更新订单为取消状态
+        UpdateWrapper<ErrandOrder> uw = new UpdateWrapper<>();
+        uw.eq("id", orderId)
+          .eq("order_status", currentStatus);
+        if (isPublisher) {
+            uw.eq("publisher_id", userId);
+        } else {
+            uw.eq("runner_id", userId);
+        }
+        uw.set("order_status", OrderStatusEnum.CANCELLED.getCode())
+          .set("cancel_time", LocalDateTime.now())
+          .set("cancel_reason", request.getCancelReason());
+
+        int rows = errandOrderMapper.update(null, uw);
+        if (rows == 0) {
+            throw new BusinessException(ErrorCode.ORDER_STATUS_CONFLICT);
+        }
+
+        // 5. 写入状态日志
+        insertStatusLog(orderId, order.getOrderNo(),
+                currentStatus, OrderStatusEnum.CANCELLED.getCode(),
+                CANCEL_ORDER_ACTION, userId, isPublisher ? OPERATOR_ROLE_STUDENT : OPERATOR_ROLE_RUNNER);
+
+        // 6. 如果已支付，创建退款记录
+        if (PayStatusEnum.PAID.getCode().equals(order.getPayStatus())) {
+            RefundRecord refund = new RefundRecord();
+            refund.setOrderId(orderId);
+            refund.setRequestId("REF_REQ" + IdWorker.getIdStr());
+            refund.setRefundNo("REF" + IdWorker.getIdStr());
+            refund.setApplyUserId(userId);
+            refund.setRefundType(1);
+            refund.setRefundAmount(order.getOrderAmount());
+            refund.setRefundReason(request.getCancelReason());
+            refund.setRefundStatus(RefundStatusEnum.PENDING.getCode());
+            refundRecordMapper.insert(refund);
+        }
+    }
+
+    /**
+     * 校验用户是否为已认证跑腿员
      */
     private void validateRunnerAuth(Long userId) {
         LambdaQueryWrapper<RunnerAuth> authWrapper = new LambdaQueryWrapper<>();
@@ -416,5 +601,46 @@ public class OrderServiceImpl implements OrderService {
         if (runnerAuth == null) {
             throw new BusinessException(ErrorCode.ORDER_HALL_ACCESS_DENIED);
         }
+    }
+
+    /**
+     * 更新订单状态（条件更新）
+     */
+    private void updateOrderStatus(Long orderId, Integer fromStatus, Integer toStatus,
+                                   Long operatorId, String operatorField, LocalDateTime actionTime) {
+        UpdateWrapper<ErrandOrder> uw = new UpdateWrapper<>();
+        uw.eq("id", orderId)
+          .eq("order_status", fromStatus)
+          .eq(operatorField, operatorId);
+
+        if (actionTime != null) {
+            String timeField = STATUS_TIME_FIELD_MAP.get(toStatus);
+            if (timeField != null) {
+                uw.set(timeField, actionTime);
+            }
+        }
+        uw.set("order_status", toStatus);
+
+        int rows = errandOrderMapper.update(null, uw);
+        if (rows == 0) {
+            throw new BusinessException(ErrorCode.ORDER_STATUS_CONFLICT);
+        }
+    }
+
+    /**
+     * 写入订单状态流转日志
+     */
+    private void insertStatusLog(Long orderId, String orderNo,
+                                 Integer beforeStatus, Integer afterStatus,
+                                 String triggerAction, Long operatorUserId, String operatorRole) {
+        OrderStatusLog statusLog = new OrderStatusLog();
+        statusLog.setOrderId(orderId);
+        statusLog.setOrderNo(orderNo);
+        statusLog.setBeforeStatus(beforeStatus);
+        statusLog.setAfterStatus(afterStatus);
+        statusLog.setTriggerAction(triggerAction);
+        statusLog.setOperatorUserId(operatorUserId);
+        statusLog.setOperatorRole(operatorRole);
+        orderStatusLogMapper.insert(statusLog);
     }
 }

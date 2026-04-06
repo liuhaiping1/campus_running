@@ -7,16 +7,20 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.example.backend.common.ErrorCode;
 import com.example.backend.common.enums.OrderStatusEnum;
 import com.example.backend.common.enums.PayStatusEnum;
+import com.example.backend.common.enums.RefundStatusEnum;
 import com.example.backend.common.exception.BusinessException;
+import com.example.backend.dto.request.OrderCancelRequest;
 import com.example.backend.dto.request.OrderCreateRequest;
 import com.example.backend.common.enums.AuthStatusEnum;
 import com.example.backend.entity.ErrandCategory;
 import com.example.backend.entity.ErrandOrder;
 import com.example.backend.entity.OrderStatusLog;
+import com.example.backend.entity.RefundRecord;
 import com.example.backend.entity.RunnerAuth;
 import com.example.backend.mapper.ErrandCategoryMapper;
 import com.example.backend.mapper.ErrandOrderMapper;
 import com.example.backend.mapper.OrderStatusLogMapper;
+import com.example.backend.mapper.RefundRecordMapper;
 import com.example.backend.mapper.RunnerAuthMapper;
 import com.example.backend.service.impl.OrderServiceImpl;
 import com.example.backend.vo.OrderDetailVO;
@@ -28,6 +32,7 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
+import org.mockito.Captor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -82,9 +87,29 @@ class OrderServiceTest {
     @Mock
     private RunnerAuthMapper runnerAuthMapper;
 
+    /** Mock 退款记录 Mapper */
+    @Mock
+    private RefundRecordMapper refundRecordMapper;
+
     /** 自动注入 Mock 依赖的被测对象 */
     @InjectMocks
     private OrderServiceImpl orderService;
+
+    // =========================================================================
+    // ArgumentCaptor
+    // =========================================================================
+
+    /** UpdateWrapper 捕获器 */
+    @Captor
+    private ArgumentCaptor<UpdateWrapper<ErrandOrder>> updateWrapperCaptor;
+
+    /** OrderStatusLog 捕获器 */
+    @Captor
+    private ArgumentCaptor<OrderStatusLog> logCaptor;
+
+    /** RefundRecord 捕获器 */
+    @Captor
+    private ArgumentCaptor<RefundRecord> refundRecordCaptor;
 
     // =========================================================================
     // 通用测试数据
@@ -1126,6 +1151,679 @@ class OrderServiceTest {
             assertEquals("ACCEPT_ORDER", statusLog.getTriggerAction(), "触发动作应为 ACCEPT_ORDER");
             assertEquals(runnerId, statusLog.getOperatorUserId(), "操作人ID应为接单人");
             assertEquals("RUNNER", statusLog.getOperatorRole(), "操作人角色应为 RUNNER");
+        }
+    }
+
+    // =========================================================================
+    // 订单流程状态测试组
+    // =========================================================================
+
+    /**
+     * 订单流程状态测试组
+     * <p>
+     * 覆盖 contact/pickup/deliver/complete 四种状态流转：
+     * <ol>
+     *   <li>contact: ACCEPTED(2) → CONTACTED(3)，操作者 RUNNER</li>
+     *   <li>pickup: CONTACTED(3) → PICKED_UP(4)，操作者 RUNNER</li>
+     *   <li>deliver: PICKED_UP(4) → DELIVERED(6)，操作者 RUNNER</li>
+     *   <li>complete: DELIVERED(6) → COMPLETED(7)，操作者 STUDENT</li>
+     * </ol>
+     * 每个流转包含：成功场景、权限错误场景、状态错误场景、并发冲突场景。
+     */
+    @Nested
+    @DisplayName("订单流程状态")
+    class OrderFlowTests {
+
+        // ==================== contact 测试 ====================
+
+        /**
+         * 测试 contact 成功
+         * <p>
+         * 验证点：
+         * <ul>
+         *   <li>订单状态为 ACCEPTED(2)，发布人ID为1L</li>
+         *   <li>runnerId=2L 执行 contact，条件更新包含 orderStatus 和 runnerId</li>
+         *   <li>状态流转日志记录 beforeStatus=ACCEPTED(2), afterStatus=CONTACTED(3)</li>
+         *   <li>日志 triggerAction="CONTACT_ORDER"，operatorRole="RUNNER"</li>
+         * </ul>
+         */
+        @Test
+        @DisplayName("contact 成功")
+        void shouldContactOrderSuccessfully() {
+            // Given
+            Long runnerId = 2L;
+            Long orderId = 100L;
+
+            ErrandOrder order = buildOrder(orderId, "ER20240107001", 1L, runnerId, 1L,
+                    OrderStatusEnum.ACCEPTED.getCode());
+            when(errandOrderMapper.selectById(orderId)).thenReturn(order);
+            doReturn(1).when(errandOrderMapper).update(any(), any());
+            when(orderStatusLogMapper.insert(any(OrderStatusLog.class))).thenReturn(1);
+
+            // When
+            orderService.contact(orderId, runnerId);
+
+            // Then: 验证条件更新包含 orderStatus 和 runnerId
+            verify(errandOrderMapper).update(any(), updateWrapperCaptor.capture());
+            String sql = updateWrapperCaptor.getValue().getSqlSegment();
+            assertTrue(sql.contains("order_status"), "更新条件应包含 order_status");
+            assertTrue(sql.contains("runner_id"), "更新条件应包含 runner_id");
+
+            // 验证日志
+            verify(orderStatusLogMapper).insert(logCaptor.capture());
+            assertEquals(OrderStatusEnum.CONTACTED.getCode(), logCaptor.getValue().getAfterStatus(),
+                    "变更后状态应为 CONTACTED(3)");
+            assertEquals("CONTACT_ORDER", logCaptor.getValue().getTriggerAction(),
+                    "触发动作应为 CONTACT_ORDER");
+        }
+
+        /**
+         * 测试 contact 时用户不是跑腿员（runnerId 不匹配 publisherId）
+         * <p>
+         * 当 runnerId=2L 但 order.publisherId=1L 时，抛出 ORDER_NOT_OWNED。
+         */
+        @Test
+        @DisplayName("contact 时用户不是跑腿员应抛出 ORDER_NOT_OWNED")
+        void shouldThrowWhenContactNotRunner() {
+            // Given: runnerId=2L, order.runnerId=2L 但 order.publisherId=1L
+            Long runnerId = 2L;
+            Long orderId = 100L;
+
+            ErrandOrder order = buildOrder(orderId, "ER20240107002", 1L, runnerId, 1L,
+                    OrderStatusEnum.ACCEPTED.getCode());
+            // runnerId=2L 是接单人，但尝试联系时用户ID不匹配（实际应该是 runnerId 但联系人是发布人？）
+            // 根据需求描述：runnerId 不匹配 publisherId，运行者不是跑腿员，抛出 ORDER_NOT_OWNED
+            // 这里 runnerId=2L, publisherId=1L，说明 runnerId 不是发布人，应为 RUNNER 角色
+            // 权限检查逻辑：order.runnerId != runnerId
+            when(errandOrderMapper.selectById(orderId)).thenReturn(order);
+
+            // When & Then: runnerId=99L 不匹配 order.runnerId=2L，显式校验抛出 ORDER_NOT_OWNED
+            BusinessException exception = assertThrows(BusinessException.class,
+                    () -> orderService.contact(orderId, 99L),
+                    "runnerId 不匹配时应抛出 ORDER_NOT_OWNED");
+
+            assertEquals(ErrorCode.ORDER_NOT_OWNED.getCode(), exception.getCode(),
+                    "错误码应为 ORDER_NOT_OWNED(5002)");
+        }
+
+        /**
+         * 测试 contact 时订单状态不正确
+         * <p>
+         * 当订单状态不是 ACCEPTED 时，抛出 ORDER_STATUS_CONFLICT。
+         */
+        @Test
+        @DisplayName("contact 时状态不是 ACCEPTED 应抛出 ORDER_STATUS_CONFLICT")
+        void shouldThrowWhenContactWrongStatus() {
+            // Given: 订单状态为 WAITING_ACCEPT(1)，不是 ACCEPTED(2)
+            Long runnerId = 2L;
+            Long orderId = 100L;
+
+            ErrandOrder order = buildOrder(orderId, "ER20240107003", 1L, runnerId, 1L,
+                    OrderStatusEnum.WAITING_ACCEPT.getCode());
+            when(errandOrderMapper.selectById(orderId)).thenReturn(order);
+
+            // When & Then
+            BusinessException exception = assertThrows(BusinessException.class,
+                    () -> orderService.contact(orderId, runnerId),
+                    "状态不是 ACCEPTED 时应抛出 ORDER_STATUS_CONFLICT");
+
+            assertEquals(ErrorCode.ORDER_STATUS_CONFLICT.getCode(), exception.getCode(),
+                    "错误码应为 ORDER_STATUS_CONFLICT(5003)");
+        }
+
+        // ==================== pickup 测试 ====================
+
+        /**
+         * 测试 pickup 成功
+         * <p>
+         * 验证点：
+         * <ul>
+         *   <li>订单状态为 CONTACTED(3)，runnerId=2L</li>
+         *   <li>runnerId=2L 执行 pickup，状态更新为 PICKED_UP(4)</li>
+         *   <li>状态流转日志 triggerAction="PICKUP_ORDER"，operatorRole="RUNNER"</li>
+         * </ul>
+         */
+        @Test
+        @DisplayName("pickup 成功")
+        void shouldPickupOrderSuccessfully() {
+            // Given
+            Long runnerId = 2L;
+            Long orderId = 100L;
+
+            ErrandOrder order = buildOrder(orderId, "ER20240107004", 1L, runnerId, 1L,
+                    OrderStatusEnum.CONTACTED.getCode());
+            when(errandOrderMapper.selectById(orderId)).thenReturn(order);
+            doReturn(1).when(errandOrderMapper).update(any(), any());
+            when(orderStatusLogMapper.insert(any(OrderStatusLog.class))).thenReturn(1);
+
+            // When
+            orderService.pickup(orderId, runnerId);
+
+            // Then: 验证更新
+            verify(errandOrderMapper).update(any(), updateWrapperCaptor.capture());
+            assertTrue(updateWrapperCaptor.getValue().getSqlSegment().contains("order_status"),
+                    "更新条件应包含 order_status");
+
+            // 验证日志
+            verify(orderStatusLogMapper).insert(logCaptor.capture());
+            assertEquals(OrderStatusEnum.PICKED_UP.getCode(), logCaptor.getValue().getAfterStatus(),
+                    "变更后状态应为 PICKED_UP(4)");
+            assertEquals("PICKUP_ORDER", logCaptor.getValue().getTriggerAction(),
+                    "触发动作应为 PICKUP_ORDER");
+            assertEquals("RUNNER", logCaptor.getValue().getOperatorRole(),
+                    "操作人角色应为 RUNNER");
+        }
+
+        /**
+         * 测试 pickup 时订单状态不是 CONTACTED
+         * <p>
+         * 当订单状态不是 CONTACTED 时，抛出 ORDER_STATUS_CONFLICT。
+         */
+        @Test
+        @DisplayName("pickup 时状态不是 CONTACTED 应抛出 ORDER_STATUS_CONFLICT")
+        void shouldThrowWhenPickupWrongStatus() {
+            // Given: 订单状态为 ACCEPTED(2)，不是 CONTACTED(3)
+            Long runnerId = 2L;
+            Long orderId = 100L;
+
+            ErrandOrder order = buildOrder(orderId, "ER20240107005", 1L, runnerId, 1L,
+                    OrderStatusEnum.ACCEPTED.getCode());
+            when(errandOrderMapper.selectById(orderId)).thenReturn(order);
+
+            // When & Then
+            BusinessException exception = assertThrows(BusinessException.class,
+                    () -> orderService.pickup(orderId, runnerId),
+                    "状态不是 CONTACTED 时应抛出 ORDER_STATUS_CONFLICT");
+
+            assertEquals(ErrorCode.ORDER_STATUS_CONFLICT.getCode(), exception.getCode(),
+                    "错误码应为 ORDER_STATUS_CONFLICT(5003)");
+        }
+
+        // ==================== deliver 测试 ====================
+
+        /**
+         * 测试 deliver 成功
+         * <p>
+         * 验证点：
+         * <ul>
+         *   <li>订单状态为 PICKED_UP(4)，runnerId=2L</li>
+         *   <li>runnerId=2L 执行 deliver，状态更新为 DELIVERED(6)</li>
+         *   <li>状态流转日志 triggerAction="DELIVER_ORDER"，operatorRole="RUNNER"</li>
+         * </ul>
+         */
+        @Test
+        @DisplayName("deliver 成功")
+        void shouldDeliverOrderSuccessfully() {
+            // Given
+            Long runnerId = 2L;
+            Long orderId = 100L;
+
+            ErrandOrder order = buildOrder(orderId, "ER20240107006", 1L, runnerId, 1L,
+                    OrderStatusEnum.PICKED_UP.getCode());
+            when(errandOrderMapper.selectById(orderId)).thenReturn(order);
+            doReturn(1).when(errandOrderMapper).update(any(), any());
+            when(orderStatusLogMapper.insert(any(OrderStatusLog.class))).thenReturn(1);
+
+            // When
+            orderService.deliver(orderId, runnerId);
+
+            // Then: 验证更新
+            verify(errandOrderMapper).update(any(), updateWrapperCaptor.capture());
+            assertTrue(updateWrapperCaptor.getValue().getSqlSegment().contains("order_status"),
+                    "更新条件应包含 order_status");
+
+            // 验证日志
+            verify(orderStatusLogMapper).insert(logCaptor.capture());
+            assertEquals(OrderStatusEnum.DELIVERED.getCode(), logCaptor.getValue().getAfterStatus(),
+                    "变更后状态应为 DELIVERED(6)");
+            assertEquals("DELIVER_ORDER", logCaptor.getValue().getTriggerAction(),
+                    "触发动作应为 DELIVER_ORDER");
+            assertEquals("RUNNER", logCaptor.getValue().getOperatorRole(),
+                    "操作人角色应为 RUNNER");
+        }
+
+        /**
+         * 测试 deliver 时订单状态不是 PICKED_UP
+         * <p>
+         * 当订单状态不是 PICKED_UP 时，抛出 ORDER_STATUS_CONFLICT。
+         */
+        @Test
+        @DisplayName("deliver 时状态不是 PICKED_UP 应抛出 ORDER_STATUS_CONFLICT")
+        void shouldThrowWhenDeliverWrongStatus() {
+            // Given: 订单状态为 CONTACTED(3)，不是 PICKED_UP(4)
+            Long runnerId = 2L;
+            Long orderId = 100L;
+
+            ErrandOrder order = buildOrder(orderId, "ER20240107007", 1L, runnerId, 1L,
+                    OrderStatusEnum.CONTACTED.getCode());
+            when(errandOrderMapper.selectById(orderId)).thenReturn(order);
+
+            // When & Then
+            BusinessException exception = assertThrows(BusinessException.class,
+                    () -> orderService.deliver(orderId, runnerId),
+                    "状态不是 PICKED_UP 时应抛出 ORDER_STATUS_CONFLICT");
+
+            assertEquals(ErrorCode.ORDER_STATUS_CONFLICT.getCode(), exception.getCode(),
+                    "错误码应为 ORDER_STATUS_CONFLICT(5003)");
+        }
+
+        // ==================== complete 测试 ====================
+
+        /**
+         * 测试 complete 成功
+         * <p>
+         * 验证点：
+         * <ul>
+         *   <li>订单状态为 DELIVERED(6)，publisherId=1L</li>
+         *   <li>userId=1L（发布人）执行 complete，状态更新为 COMPLETED(7)</li>
+         *   <li>状态流转日志 triggerAction="COMPLETE_ORDER"，operatorRole="STUDENT"</li>
+         * </ul>
+         */
+        @Test
+        @DisplayName("complete 成功")
+        void shouldCompleteOrderSuccessfully() {
+            // Given
+            Long publisherId = 1L;
+            Long runnerId = 2L;
+            Long orderId = 100L;
+
+            ErrandOrder order = buildOrder(orderId, "ER20240107008", publisherId, runnerId, 1L,
+                    OrderStatusEnum.DELIVERED.getCode());
+            when(errandOrderMapper.selectById(orderId)).thenReturn(order);
+            doReturn(1).when(errandOrderMapper).update(any(), any());
+            when(orderStatusLogMapper.insert(any(OrderStatusLog.class))).thenReturn(1);
+
+            // When: userId=1L 是发布人
+            orderService.complete(orderId, publisherId);
+
+            // Then: 验证更新
+            verify(errandOrderMapper).update(any(), updateWrapperCaptor.capture());
+            assertTrue(updateWrapperCaptor.getValue().getSqlSegment().contains("order_status"),
+                    "更新条件应包含 order_status");
+
+            // 验证日志
+            verify(orderStatusLogMapper).insert(logCaptor.capture());
+            assertEquals(OrderStatusEnum.COMPLETED.getCode(), logCaptor.getValue().getAfterStatus(),
+                    "变更后状态应为 COMPLETED(7)");
+            assertEquals("COMPLETE_ORDER", logCaptor.getValue().getTriggerAction(),
+                    "触发动作应为 COMPLETE_ORDER");
+            assertEquals("STUDENT", logCaptor.getValue().getOperatorRole(),
+                    "操作人角色应为 STUDENT");
+        }
+
+        /**
+         * 测试 complete 时用户不是发布人
+         * <p>
+         * 当 userId=2L（跑腿员）尝试 complete，但发布人是 1L 时，抛出 ORDER_NOT_OWNED。
+         */
+        @Test
+        @DisplayName("complete 时用户不是发布人应抛出 ORDER_NOT_OWNED")
+        void shouldThrowWhenCompleteNotPublisher() {
+            // Given: publisherId=1L, runnerId=2L，userId=2L 尝试 complete
+            Long publisherId = 1L;
+            Long runnerId = 2L;
+            Long orderId = 100L;
+
+            ErrandOrder order = buildOrder(orderId, "ER20240107009", publisherId, runnerId, 1L,
+                    OrderStatusEnum.DELIVERED.getCode());
+            when(errandOrderMapper.selectById(orderId)).thenReturn(order);
+
+            // When & Then: userId=2L 不匹配 publisherId=1L，显式校验抛出 ORDER_NOT_OWNED
+            BusinessException exception = assertThrows(BusinessException.class,
+                    () -> orderService.complete(orderId, runnerId),
+                    "userId 不匹配 publisherId 时应抛出 ORDER_NOT_OWNED");
+
+            assertEquals(ErrorCode.ORDER_NOT_OWNED.getCode(), exception.getCode(),
+                    "错误码应为 ORDER_NOT_OWNED(5002)");
+        }
+
+        /**
+         * 测试 complete 时订单状态不是 DELIVERED
+         * <p>
+         * 当订单状态不是 DELIVERED 时，抛出 ORDER_STATUS_CONFLICT。
+         */
+        @Test
+        @DisplayName("complete 时状态不是 DELIVERED 应抛出 ORDER_STATUS_CONFLICT")
+        void shouldThrowWhenCompleteWrongStatus() {
+            // Given: 订单状态为 PICKED_UP(4)，不是 DELIVERED(6)
+            Long publisherId = 1L;
+            Long orderId = 100L;
+
+            ErrandOrder order = buildOrder(orderId, "ER20240107010", publisherId, 2L, 1L,
+                    OrderStatusEnum.PICKED_UP.getCode());
+            when(errandOrderMapper.selectById(orderId)).thenReturn(order);
+
+            // When & Then
+            BusinessException exception = assertThrows(BusinessException.class,
+                    () -> orderService.complete(orderId, publisherId),
+                    "状态不是 DELIVERED 时应抛出 ORDER_STATUS_CONFLICT");
+
+            assertEquals(ErrorCode.ORDER_STATUS_CONFLICT.getCode(), exception.getCode(),
+                    "错误码应为 ORDER_STATUS_CONFLICT(5003)");
+        }
+
+        // ==================== 条件更新失败测试 ====================
+
+        /**
+         * 测试条件更新返回 0 时抛出异常
+         * <p>
+         * 当 errandOrderMapper.update 返回 0 行时，说明并发冲突或条件不匹配，
+         * 应抛出 ORDER_STATUS_CONFLICT。
+         */
+        @Test
+        @DisplayName("条件更新返回 0 时应抛出 ORDER_STATUS_CONFLICT")
+        void shouldThrowWhenUpdateReturnsZero() {
+            // Given: contact 场景，但 update 返回 0
+            Long runnerId = 2L;
+            Long orderId = 100L;
+
+            ErrandOrder order = buildOrder(orderId, "ER20240107011", 1L, runnerId, 1L,
+                    OrderStatusEnum.ACCEPTED.getCode());
+            when(errandOrderMapper.selectById(orderId)).thenReturn(order);
+            doReturn(0).when(errandOrderMapper).update(any(), any()); // 更新失败
+
+            // When & Then
+            BusinessException exception = assertThrows(BusinessException.class,
+                    () -> orderService.contact(orderId, runnerId),
+                    "update 返回 0 时应抛出 ORDER_STATUS_CONFLICT");
+
+            assertEquals(ErrorCode.ORDER_STATUS_CONFLICT.getCode(), exception.getCode(),
+                    "错误码应为 ORDER_STATUS_CONFLICT(5003)");
+        }
+    }
+
+    // =========================================================================
+    // 取消订单测试组
+    // =========================================================================
+
+    /**
+     * 取消订单功能测试组
+     * <p>
+     * 覆盖取消订单的十种核心场景：
+     * <ol>
+     *   <li>发布人取消未支付订单成功 —— 无需创建退款记录</li>
+     *   <li>发布人取消已支付订单成功 —— 创建退款记录</li>
+     *   <li>跑腿员取消已接单订单成功 —— 也需创建退款记录</li>
+     *   <li>非订单所属人取消失败 —— 抛出 ORDER_NOT_OWNED</li>
+     *   <li>已完成订单不能取消 —— 抛出 ORDER_CANNOT_CANCEL</li>
+     *   <li>已取消订单不能重复取消</li>
+     *   <li>条件更新返回0时抛状态冲突异常</li>
+     *   <li>取消成功写入状态日志</li>
+     *   <li>未支付订单取消不创建退款记录</li>
+     *   <li>已送达订单不允许取消</li>
+     * </ol>
+     */
+    @Nested
+    @DisplayName("取消订单")
+    class CancelOrderTests {
+
+        /**
+         * 测试发布人取消未支付订单成功
+         * <p>
+         * 当订单 payStatus=UNPAID 时取消，不应创建退款记录。
+         * 仅更新订单状态为 CANCELLED 并写入状态流转日志。
+         */
+        @Test
+        @DisplayName("发布人取消未支付订单成功")
+        void shouldCancelUnpaidOrderAsPublisher() {
+            Long publisherId = 1L;
+            Long orderId = 100L;
+            OrderCancelRequest request = new OrderCancelRequest();
+            request.setCancelReason("不需要了");
+
+            ErrandOrder order = buildOrder(orderId, "ER20240108001", publisherId, 2L, 1L,
+                    OrderStatusEnum.WAITING_ACCEPT.getCode());
+            order.setPayStatus(PayStatusEnum.UNPAID.getCode());
+            when(errandOrderMapper.selectById(orderId)).thenReturn(order);
+            doReturn(1).when(errandOrderMapper).update(any(), any());
+            when(orderStatusLogMapper.insert(any(OrderStatusLog.class))).thenReturn(1);
+
+            orderService.cancel(orderId, publisherId, request);
+
+            verify(errandOrderMapper).update(any(), any());
+            verify(orderStatusLogMapper).insert(any(OrderStatusLog.class));
+            // 未支付订单不应创建退款记录
+            verify(refundRecordMapper, never()).insert(any(RefundRecord.class));
+        }
+
+        /**
+         * 测试发布人取消已支付订单成功并创建退款记录
+         * <p>
+         * 当订单 payStatus=PAID 时取消，应创建退款记录（RefundRecord），
+         * 退款状态为 PENDING，退款原因使用请求中的 cancelReason。
+         */
+        @Test
+        @DisplayName("发布人取消已支付订单成功并创建退款记录")
+        void shouldCancelPaidOrderAndCreateRefundRecord() {
+            Long publisherId = 1L;
+            Long orderId = 100L;
+            OrderCancelRequest request = new OrderCancelRequest();
+            request.setCancelReason("临时有事");
+
+            ErrandOrder order = buildOrder(orderId, "ER20240108002", publisherId, 2L, 1L,
+                    OrderStatusEnum.WAITING_ACCEPT.getCode());
+            order.setPayStatus(PayStatusEnum.PAID.getCode());
+            order.setOrderAmount(BigDecimal.valueOf(10.00));
+            when(errandOrderMapper.selectById(orderId)).thenReturn(order);
+            doReturn(1).when(errandOrderMapper).update(any(), any());
+            when(orderStatusLogMapper.insert(any(OrderStatusLog.class))).thenReturn(1);
+            when(refundRecordMapper.insert(any(RefundRecord.class))).thenReturn(1);
+
+            orderService.cancel(orderId, publisherId, request);
+
+            verify(refundRecordMapper).insert(refundRecordCaptor.capture());
+            RefundRecord refund = refundRecordCaptor.getValue();
+            assertEquals(orderId, refund.getOrderId());
+            assertNotNull(refund.getRequestId(), "requestId 不应为空");
+            assertEquals(request.getCancelReason(), refund.getRefundReason());
+            assertEquals(Integer.valueOf(RefundStatusEnum.PENDING.getCode()), refund.getRefundStatus());
+        }
+
+        /**
+         * 测试跑腿员取消已接单订单成功
+         * <p>
+         * 当 runnerId 取消订单时（runnerId=order.runnerId），也应创建退款记录。
+         * 无论取消操作由发布人还是跑腿员发起，已支付订单的退款逻辑一致。
+         */
+        @Test
+        @DisplayName("跑腿员取消已接单订单成功")
+        void shouldCancelAsRunner() {
+            Long runnerId = 2L;
+            Long publisherId = 1L;
+            Long orderId = 100L;
+            OrderCancelRequest request = new OrderCancelRequest();
+            request.setCancelReason("太远了");
+
+            ErrandOrder order = buildOrder(orderId, "ER20240108003", publisherId, runnerId, 1L,
+                    OrderStatusEnum.ACCEPTED.getCode());
+            order.setPayStatus(PayStatusEnum.PAID.getCode());
+            when(errandOrderMapper.selectById(orderId)).thenReturn(order);
+            doReturn(1).when(errandOrderMapper).update(any(), any());
+            when(orderStatusLogMapper.insert(any(OrderStatusLog.class))).thenReturn(1);
+            when(refundRecordMapper.insert(any(RefundRecord.class))).thenReturn(1);
+
+            orderService.cancel(orderId, runnerId, request);
+
+            verify(errandOrderMapper).update(any(), any());
+            verify(orderStatusLogMapper).insert(any(OrderStatusLog.class));
+            // 跑腿员取消也应创建退款记录
+            verify(refundRecordMapper).insert(any(RefundRecord.class));
+        }
+
+        /**
+         * 测试非订单所属人取消失败
+         * <p>
+         * 当 userId 既不是 publisherId 也不是 runnerId 时，
+         * 应抛出 BusinessException，错误码为 ORDER_NOT_OWNED(5002)。
+         */
+        @Test
+        @DisplayName("非订单所属人取消失败")
+        void shouldThrowWhenCancelNotOwner() {
+            Long orderId = 100L;
+            OrderCancelRequest request = new OrderCancelRequest();
+            request.setCancelReason("test");
+
+            ErrandOrder order = buildOrder(orderId, "ER20240108004", 1L, 2L, 1L,
+                    OrderStatusEnum.WAITING_ACCEPT.getCode());
+            when(errandOrderMapper.selectById(orderId)).thenReturn(order);
+
+            BusinessException exception = assertThrows(BusinessException.class,
+                    () -> orderService.cancel(orderId, 99L, request));
+            assertEquals(ErrorCode.ORDER_NOT_OWNED.getCode(), exception.getCode());
+        }
+
+        /**
+         * 测试已完成订单不能取消
+         * <p>
+         * 当订单状态为 COMPLETED 时，应抛出 BusinessException，
+         * 错误码为 ORDER_CANNOT_CANCEL(5008)。
+         */
+        @Test
+        @DisplayName("已完成订单不能取消")
+        void shouldThrowWhenCancelCompletedOrder() {
+            Long publisherId = 1L;
+            Long orderId = 100L;
+            OrderCancelRequest request = new OrderCancelRequest();
+            request.setCancelReason("test");
+
+            ErrandOrder order = buildOrder(orderId, "ER20240108005", publisherId, 2L, 1L,
+                    OrderStatusEnum.COMPLETED.getCode());
+            when(errandOrderMapper.selectById(orderId)).thenReturn(order);
+
+            BusinessException exception = assertThrows(BusinessException.class,
+                    () -> orderService.cancel(orderId, publisherId, request));
+            assertEquals(ErrorCode.ORDER_CANNOT_CANCEL.getCode(), exception.getCode());
+        }
+
+        /**
+         * 测试已取消订单不能重复取消
+         * <p>
+         * 当订单状态为 CANCELLED 时，应抛出 BusinessException，
+         * 错误码为 ORDER_CANNOT_CANCEL(5008)。
+         */
+        @Test
+        @DisplayName("已取消订单不能重复取消")
+        void shouldThrowWhenCancelAlreadyCancelled() {
+            Long publisherId = 1L;
+            Long orderId = 100L;
+            OrderCancelRequest request = new OrderCancelRequest();
+            request.setCancelReason("test");
+
+            ErrandOrder order = buildOrder(orderId, "ER20240108006", publisherId, 2L, 1L,
+                    OrderStatusEnum.CANCELLED.getCode());
+            when(errandOrderMapper.selectById(orderId)).thenReturn(order);
+
+            BusinessException exception = assertThrows(BusinessException.class,
+                    () -> orderService.cancel(orderId, publisherId, request));
+            assertEquals(ErrorCode.ORDER_CANNOT_CANCEL.getCode(), exception.getCode());
+        }
+
+        /**
+         * 测试条件更新返回0时抛状态冲突异常
+         * <p>
+         * 当 errandOrderMapper.update 返回 0 行时，说明并发冲突或订单状态已变化，
+         * 应抛出 BusinessException，错误码为 ORDER_STATUS_CONFLICT(5003)。
+         * 同时不应写入状态日志或退款记录。
+         */
+        @Test
+        @DisplayName("条件更新返回0时抛状态冲突异常")
+        void shouldThrowWhenUpdateReturnsZero() {
+            Long publisherId = 1L;
+            Long orderId = 100L;
+            OrderCancelRequest request = new OrderCancelRequest();
+            request.setCancelReason("test");
+
+            ErrandOrder order = buildOrder(orderId, "ER20240108007", publisherId, 2L, 1L,
+                    OrderStatusEnum.WAITING_ACCEPT.getCode());
+            when(errandOrderMapper.selectById(orderId)).thenReturn(order);
+            doReturn(0).when(errandOrderMapper).update(any(), any());
+
+            BusinessException exception = assertThrows(BusinessException.class,
+                    () -> orderService.cancel(orderId, publisherId, request));
+            assertEquals(ErrorCode.ORDER_STATUS_CONFLICT.getCode(), exception.getCode());
+            verify(orderStatusLogMapper, never()).insert(any(OrderStatusLog.class));
+            verify(refundRecordMapper, never()).insert(any(RefundRecord.class));
+        }
+
+        /**
+         * 测试取消成功写入状态日志
+         * <p>
+         * 验证 cancel() 方法正确写入 order_status_log，
+         * beforeStatus=WAITING_ACCEPT(1), afterStatus=CANCELLED(8),
+         * triggerAction="CANCEL_ORDER"。
+         */
+        @Test
+        @DisplayName("取消成功写入状态日志")
+        void shouldWriteStatusLogOnCancel() {
+            Long publisherId = 1L;
+            Long orderId = 100L;
+            OrderCancelRequest request = new OrderCancelRequest();
+            request.setCancelReason("不需要了");
+
+            ErrandOrder order = buildOrder(orderId, "ER20240108008", publisherId, 2L, 1L,
+                    OrderStatusEnum.WAITING_ACCEPT.getCode());
+            order.setPayStatus(PayStatusEnum.UNPAID.getCode());
+            when(errandOrderMapper.selectById(orderId)).thenReturn(order);
+            doReturn(1).when(errandOrderMapper).update(any(), any());
+            when(orderStatusLogMapper.insert(any(OrderStatusLog.class))).thenReturn(1);
+
+            orderService.cancel(orderId, publisherId, request);
+
+            verify(orderStatusLogMapper).insert(logCaptor.capture());
+            OrderStatusLog log = logCaptor.getValue();
+            assertEquals(orderId, log.getOrderId());
+            assertEquals(OrderStatusEnum.WAITING_ACCEPT.getCode(), log.getBeforeStatus());
+            assertEquals(OrderStatusEnum.CANCELLED.getCode(), log.getAfterStatus());
+            assertEquals("CANCEL_ORDER", log.getTriggerAction());
+        }
+
+        /**
+         * 测试未支付订单取消不创建退款记录
+         * <p>
+         * 当订单 payStatus=UNPAID 时，即使状态为 ACCEPTED 取消也不应创建退款记录。
+         * 仅更新订单状态并写入日志。
+         */
+        @Test
+        @DisplayName("未支付订单取消不创建退款记录")
+        void shouldNotCreateRefundForUnpaidOrder() {
+            Long publisherId = 1L;
+            Long orderId = 100L;
+            OrderCancelRequest request = new OrderCancelRequest();
+            request.setCancelReason("不需要了");
+
+            ErrandOrder order = buildOrder(orderId, "ER20240108009", publisherId, 2L, 1L,
+                    OrderStatusEnum.ACCEPTED.getCode());
+            order.setPayStatus(PayStatusEnum.UNPAID.getCode());
+            when(errandOrderMapper.selectById(orderId)).thenReturn(order);
+            doReturn(1).when(errandOrderMapper).update(any(), any());
+            when(orderStatusLogMapper.insert(any(OrderStatusLog.class))).thenReturn(1);
+
+            orderService.cancel(orderId, publisherId, request);
+
+            verify(refundRecordMapper, never()).insert(any(RefundRecord.class));
+        }
+
+        /**
+         * 测试已送达订单不允许取消
+         * <p>
+         * 当订单状态为 DELIVERED(6) 时，应抛出 BusinessException，
+         * 错误码为 ORDER_CANNOT_CANCEL(5008)。
+         */
+        @Test
+        @DisplayName("已送达订单不允许取消")
+        void shouldThrowWhenCancelDeliveredOrder() {
+            Long publisherId = 1L;
+            Long orderId = 100L;
+            OrderCancelRequest request = new OrderCancelRequest();
+            request.setCancelReason("test");
+
+            ErrandOrder order = buildOrder(orderId, "ER20240108010", publisherId, 2L, 1L,
+                    OrderStatusEnum.DELIVERED.getCode());
+            when(errandOrderMapper.selectById(orderId)).thenReturn(order);
+
+            BusinessException exception = assertThrows(BusinessException.class,
+                    () -> orderService.cancel(orderId, publisherId, request));
+            assertEquals(ErrorCode.ORDER_CANNOT_CANCEL.getCode(), exception.getCode());
         }
     }
 

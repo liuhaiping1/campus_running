@@ -2,6 +2,7 @@ package com.example.backend.controller.order;
 
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.example.backend.common.Result;
+import com.example.backend.dto.request.OrderCancelRequest;
 import com.example.backend.dto.request.OrderCreateRequest;
 import com.example.backend.security.LoginUser;
 import com.example.backend.service.OrderService;
@@ -108,5 +109,72 @@ public class OrderController {
                                @AuthenticationPrincipal LoginUser loginUser) {
         orderService.accept(id, loginUser.getUserId());
         return Result.success("接单成功", null);
+    }
+
+    /**
+     * 跑腿员确认已联系发布人
+     * @param id        订单ID
+     * @param loginUser 当前登录用户（跑腿员）
+     * @return 操作结果
+     */
+    @PostMapping("/{id}/contact")
+    public Result<Void> contact(@PathVariable Long id,
+                                @AuthenticationPrincipal LoginUser loginUser) {
+        orderService.contact(id, loginUser.getUserId());
+        return Result.success("联系成功", null);
+    }
+
+    /**
+     * 跑腿员确认已取货
+     * @param id        订单ID
+     * @param loginUser 当前登录用户（跑腿员）
+     * @return 操作结果
+     */
+    @PostMapping("/{id}/pickup")
+    public Result<Void> pickup(@PathVariable Long id,
+                               @AuthenticationPrincipal LoginUser loginUser) {
+        orderService.pickup(id, loginUser.getUserId());
+        return Result.success("取货成功", null);
+    }
+
+    /**
+     * 跑腿员确认已送达
+     * @param id        订单ID
+     * @param loginUser 当前登录用户（跑腿员）
+     * @return 操作结果
+     */
+    @PostMapping("/{id}/deliver")
+    public Result<Void> deliver(@PathVariable Long id,
+                                @AuthenticationPrincipal LoginUser loginUser) {
+        orderService.deliver(id, loginUser.getUserId());
+        return Result.success("送达成功", null);
+    }
+
+    /**
+     * 发布人确认订单完成
+     * @param id        订单ID
+     * @param loginUser 当前登录用户（发布人）
+     * @return 操作结果
+     */
+    @PostMapping("/{id}/complete")
+    public Result<Void> complete(@PathVariable Long id,
+                                 @AuthenticationPrincipal LoginUser loginUser) {
+        orderService.complete(id, loginUser.getUserId());
+        return Result.success("确认完成", null);
+    }
+
+    /**
+     * 取消订单
+     * @param id        订单ID
+     * @param loginUser 当前登录用户
+     * @param request   取消请求
+     * @return 操作结果
+     */
+    @PostMapping("/{id}/cancel")
+    public Result<Void> cancel(@PathVariable Long id,
+                               @AuthenticationPrincipal LoginUser loginUser,
+                               @Valid @RequestBody OrderCancelRequest request) {
+        orderService.cancel(id, loginUser.getUserId(), request);
+        return Result.success("取消成功", null);
     }
 }

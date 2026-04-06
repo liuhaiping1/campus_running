@@ -1,6 +1,7 @@
 package com.example.backend.service;
 
 import com.baomidou.mybatisplus.core.metadata.IPage;
+import com.example.backend.dto.request.OrderCancelRequest;
 import com.example.backend.dto.request.OrderCreateRequest;
 import com.example.backend.vo.OrderDetailVO;
 import com.example.backend.vo.OrderVO;
@@ -53,4 +54,40 @@ public interface OrderService {
      * @param runnerId  跑腿员ID
      */
     void accept(Long orderId, Long runnerId);
+
+    /**
+     * 跑腿员确认已联系发布人
+     * @param orderId  订单ID
+     * @param runnerId 跑腿员ID
+     */
+    void contact(Long orderId, Long runnerId);
+
+    /**
+     * 跑腿员确认已取货
+     * @param orderId  订单ID
+     * @param runnerId 跑腿员ID
+     */
+    void pickup(Long orderId, Long runnerId);
+
+    /**
+     * 跑腿员确认已送达
+     * @param orderId  订单ID
+     * @param runnerId 跑腿员ID
+     */
+    void deliver(Long orderId, Long runnerId);
+
+    /**
+     * 发布人确认订单完成
+     * @param orderId 订单ID
+     * @param userId  发布人ID
+     */
+    void complete(Long orderId, Long userId);
+
+    /**
+     * 取消订单
+     * @param orderId 订单ID
+     * @param userId  当前用户ID（发布人或跑腿员）
+     * @param request 取消请求
+     */
+    void cancel(Long orderId, Long userId, OrderCancelRequest request);
 }
