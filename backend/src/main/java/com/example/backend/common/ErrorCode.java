@@ -66,6 +66,7 @@ public enum ErrorCode {
     CATEGORY_NOT_FOUND(9001, "分类不存在"),
     CATEGORY_CODE_EXISTS(9002, "分类编码已存在"),
     CATEGORY_INVALID_FEE_RULE(9003, "收费区间配置不合法"),
+    CATEGORY_NAME_EXISTS(9004, "分类名称已存在"),
 
     // 公告错误 10xxx
     NOTICE_NOT_FOUND(10001, "公告不存在"),
