@@ -17,10 +17,12 @@ import com.example.backend.entity.ErrandOrder;
 import com.example.backend.entity.OrderStatusLog;
 import com.example.backend.entity.RefundRecord;
 import com.example.backend.entity.RunnerAuth;
+import com.example.backend.entity.RunnerIncomeRecord;
 import com.example.backend.mapper.ErrandCategoryMapper;
 import com.example.backend.mapper.ErrandOrderMapper;
 import com.example.backend.mapper.OrderStatusLogMapper;
 import com.example.backend.mapper.RefundRecordMapper;
+import com.example.backend.mapper.RunnerIncomeRecordMapper;
 import com.example.backend.mapper.RunnerAuthMapper;
 import com.example.backend.service.impl.OrderServiceImpl;
 import com.example.backend.vo.OrderDetailVO;
@@ -90,6 +92,10 @@ class OrderServiceTest {
     /** Mock 退款记录 Mapper */
     @Mock
     private RefundRecordMapper refundRecordMapper;
+
+    /** Mock 跑腿收益记录 Mapper */
+    @Mock
+    private RunnerIncomeRecordMapper runnerIncomeRecordMapper;
 
     /** 自动注入 Mock 依赖的被测对象 */
     @InjectMocks

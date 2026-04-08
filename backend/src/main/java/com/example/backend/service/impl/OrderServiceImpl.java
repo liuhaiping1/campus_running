@@ -19,11 +19,13 @@ import com.example.backend.entity.ErrandOrder;
 import com.example.backend.entity.OrderStatusLog;
 import com.example.backend.entity.RefundRecord;
 import com.example.backend.entity.RunnerAuth;
+import com.example.backend.entity.RunnerIncomeRecord;
 import com.example.backend.mapper.ErrandCategoryMapper;
 import com.example.backend.mapper.ErrandOrderMapper;
 import com.example.backend.mapper.OrderStatusLogMapper;
 import com.example.backend.mapper.RefundRecordMapper;
 import com.example.backend.mapper.RunnerAuthMapper;
+import com.example.backend.mapper.RunnerIncomeRecordMapper;
 import com.example.backend.service.OrderService;
 import com.example.backend.vo.OrderDetailVO;
 import com.example.backend.vo.OrderStatusLogVO;
@@ -71,6 +73,7 @@ public class OrderServiceImpl implements OrderService {
     private final OrderStatusLogMapper orderStatusLogMapper;
     private final RunnerAuthMapper runnerAuthMapper;
     private final RefundRecordMapper refundRecordMapper;
+    private final RunnerIncomeRecordMapper runnerIncomeRecordMapper;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     /**
@@ -80,12 +83,14 @@ public class OrderServiceImpl implements OrderService {
                             ErrandCategoryMapper errandCategoryMapper,
                             OrderStatusLogMapper orderStatusLogMapper,
                             RunnerAuthMapper runnerAuthMapper,
-                            RefundRecordMapper refundRecordMapper) {
+                            RefundRecordMapper refundRecordMapper,
+                            RunnerIncomeRecordMapper runnerIncomeRecordMapper) {
         this.errandOrderMapper = errandOrderMapper;
         this.errandCategoryMapper = errandCategoryMapper;
         this.orderStatusLogMapper = orderStatusLogMapper;
         this.runnerAuthMapper = runnerAuthMapper;
         this.refundRecordMapper = refundRecordMapper;
+        this.runnerIncomeRecordMapper = runnerIncomeRecordMapper;
     }
 
     /**
@@ -491,11 +496,25 @@ public class OrderServiceImpl implements OrderService {
         if (!userId.equals(order.getPublisherId())) {
             throw new BusinessException(ErrorCode.ORDER_NOT_OWNED);
         }
+        // 检查收益记录是否已存在，防止重复生成
+        LambdaQueryWrapper<RunnerIncomeRecord> incomeCheckWrapper = new LambdaQueryWrapper<>();
+        incomeCheckWrapper.eq(RunnerIncomeRecord::getOrderId, orderId)
+                .eq(RunnerIncomeRecord::getIsDeleted, 0);
+        long existingCount = runnerIncomeRecordMapper.selectCount(incomeCheckWrapper);
         updateOrderStatus(orderId, OrderStatusEnum.DELIVERED.getCode(), OrderStatusEnum.COMPLETED.getCode(),
                 userId, "publisher_id", LocalDateTime.now());
         insertStatusLog(orderId, order.getOrderNo(),
                 OrderStatusEnum.DELIVERED.getCode(), OrderStatusEnum.COMPLETED.getCode(),
                 COMPLETE_ORDER_ACTION, userId, OPERATOR_ROLE_STUDENT);
+        // 仅在更新成功且收益记录不存在时创建
+        if (existingCount == 0) {
+            RunnerIncomeRecord incomeRecord = new RunnerIncomeRecord();
+            incomeRecord.setOrderId(orderId);
+            incomeRecord.setRunnerId(order.getRunnerId());
+            incomeRecord.setIncomeAmount(order.getEstimatedRunnerIncome());
+            incomeRecord.setSettlementStatus(SettlementStatusEnum.PENDING.getCode());
+            runnerIncomeRecordMapper.insert(incomeRecord);
+        }
     }
 
     /**
