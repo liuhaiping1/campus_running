@@ -27,6 +27,9 @@ public class RefundRecordVO {
      */
     private Long orderId;
 
+    /** 关联支付单号快照 */
+    private String payNo;
+
     /**
      * Refund number.
      */

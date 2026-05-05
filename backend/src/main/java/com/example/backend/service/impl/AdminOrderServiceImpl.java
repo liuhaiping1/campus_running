@@ -7,9 +7,15 @@ import com.example.backend.common.ErrorCode;
 import com.example.backend.common.exception.BusinessException;
 import com.example.backend.entity.ErrandCategory;
 import com.example.backend.entity.ErrandOrder;
+import com.example.backend.entity.ErrandOrderAddress;
+import com.example.backend.entity.ErrandOrderDetail;
+import com.example.backend.entity.OrderEvaluation;
 import com.example.backend.entity.OrderStatusLog;
 import com.example.backend.mapper.ErrandCategoryMapper;
+import com.example.backend.mapper.ErrandOrderAddressMapper;
+import com.example.backend.mapper.ErrandOrderDetailMapper;
 import com.example.backend.mapper.ErrandOrderMapper;
+import com.example.backend.mapper.OrderEvaluationMapper;
 import com.example.backend.mapper.OrderStatusLogMapper;
 import com.example.backend.service.AdminOrderService;
 import com.example.backend.vo.OrderDetailVO;
@@ -36,6 +42,9 @@ public class AdminOrderServiceImpl implements AdminOrderService {
 
     private final ErrandOrderMapper errandOrderMapper;
     private final ErrandCategoryMapper errandCategoryMapper;
+    private final ErrandOrderAddressMapper errandOrderAddressMapper;
+    private final ErrandOrderDetailMapper errandOrderDetailMapper;
+    private final OrderEvaluationMapper orderEvaluationMapper;
     private final OrderStatusLogMapper orderStatusLogMapper;
 
     /**
@@ -43,9 +52,15 @@ public class AdminOrderServiceImpl implements AdminOrderService {
      */
     public AdminOrderServiceImpl(ErrandOrderMapper errandOrderMapper,
                                   ErrandCategoryMapper errandCategoryMapper,
+                                  ErrandOrderAddressMapper errandOrderAddressMapper,
+                                  ErrandOrderDetailMapper errandOrderDetailMapper,
+                                  OrderEvaluationMapper orderEvaluationMapper,
                                   OrderStatusLogMapper orderStatusLogMapper) {
         this.errandOrderMapper = errandOrderMapper;
         this.errandCategoryMapper = errandCategoryMapper;
+        this.errandOrderAddressMapper = errandOrderAddressMapper;
+        this.errandOrderDetailMapper = errandOrderDetailMapper;
+        this.orderEvaluationMapper = orderEvaluationMapper;
         this.orderStatusLogMapper = orderStatusLogMapper;
     }
 
@@ -200,10 +215,38 @@ public class AdminOrderServiceImpl implements AdminOrderService {
                 .cancelTime(baseVO.getCancelTime())
                 .cancelReason(baseVO.getCancelReason())
                 .appealFlag(baseVO.getAppealFlag())
+                .contactName(order.getContactName())
+                .contactPhone(order.getContactPhone())
                 .createTime(baseVO.getCreateTime())
                 .updateTime(baseVO.getUpdateTime())
                 .statusLogs(logVOs)
                 .build();
+
+        // 查询地址快照，查不到不抛异常
+        LambdaQueryWrapper<ErrandOrderAddress> addrWrapper = new LambdaQueryWrapper<>();
+        addrWrapper.eq(ErrandOrderAddress::getOrderId, orderId);
+        List<ErrandOrderAddress> addresses = errandOrderAddressMapper.selectList(addrWrapper);
+        for (ErrandOrderAddress addr : addresses) {
+            if (Integer.valueOf(1).equals(addr.getAddressRole())) {
+                detailVO.setPickupAddressDetail(addr);
+            } else if (Integer.valueOf(2).equals(addr.getAddressRole())) {
+                detailVO.setDeliveryAddressDetail(addr);
+            }
+        }
+
+        // 查询分类扩展详情，查不到不抛异常
+        LambdaQueryWrapper<ErrandOrderDetail> detailWrapper = new LambdaQueryWrapper<>();
+        detailWrapper.eq(ErrandOrderDetail::getOrderId, orderId);
+        ErrandOrderDetail orderDetail = errandOrderDetailMapper.selectOne(detailWrapper);
+        detailVO.setOrderDetail(orderDetail);
+
+        // 查询评价ID，保持管理端和普通端详情结构一致。
+        LambdaQueryWrapper<OrderEvaluation> evaluationWrapper = new LambdaQueryWrapper<>();
+        evaluationWrapper.eq(OrderEvaluation::getOrderId, orderId);
+        OrderEvaluation evaluation = orderEvaluationMapper.selectOne(evaluationWrapper);
+        if (evaluation != null) {
+            detailVO.setEvaluationId(evaluation.getId());
+        }
 
         return detailVO;
     }

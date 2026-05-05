@@ -6,6 +6,7 @@ import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.core.toolkit.IdWorker;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.example.backend.common.ErrorCode;
+import com.example.backend.common.util.FeeRuleUtil;
 import com.example.backend.common.enums.AuthStatusEnum;
 import com.example.backend.common.enums.OrderStatusEnum;
 import com.example.backend.common.enums.PayStatusEnum;
@@ -16,13 +17,21 @@ import com.example.backend.dto.request.OrderCancelRequest;
 import com.example.backend.dto.request.OrderCreateRequest;
 import com.example.backend.entity.ErrandCategory;
 import com.example.backend.entity.ErrandOrder;
+import com.example.backend.entity.ErrandOrderAddress;
+import com.example.backend.entity.ErrandOrderDetail;
 import com.example.backend.entity.OrderStatusLog;
+import com.example.backend.entity.OrderEvaluation;
+import com.example.backend.entity.PaymentOrder;
 import com.example.backend.entity.RefundRecord;
 import com.example.backend.entity.RunnerAuth;
 import com.example.backend.entity.RunnerIncomeRecord;
 import com.example.backend.mapper.ErrandCategoryMapper;
+import com.example.backend.mapper.ErrandOrderAddressMapper;
+import com.example.backend.mapper.ErrandOrderDetailMapper;
 import com.example.backend.mapper.ErrandOrderMapper;
+import com.example.backend.mapper.PaymentOrderMapper;
 import com.example.backend.mapper.OrderStatusLogMapper;
+import com.example.backend.mapper.OrderEvaluationMapper;
 import com.example.backend.mapper.RefundRecordMapper;
 import com.example.backend.mapper.RunnerAuthMapper;
 import com.example.backend.mapper.RunnerIncomeRecordMapper;
@@ -70,7 +79,11 @@ public class OrderServiceImpl implements OrderService {
 
     private final ErrandOrderMapper errandOrderMapper;
     private final ErrandCategoryMapper errandCategoryMapper;
+    private final ErrandOrderAddressMapper errandOrderAddressMapper;
+    private final ErrandOrderDetailMapper errandOrderDetailMapper;
+    private final PaymentOrderMapper paymentOrderMapper;
     private final OrderStatusLogMapper orderStatusLogMapper;
+    private final OrderEvaluationMapper orderEvaluationMapper;
     private final RunnerAuthMapper runnerAuthMapper;
     private final RefundRecordMapper refundRecordMapper;
     private final RunnerIncomeRecordMapper runnerIncomeRecordMapper;
@@ -81,13 +94,21 @@ public class OrderServiceImpl implements OrderService {
      */
     public OrderServiceImpl(ErrandOrderMapper errandOrderMapper,
                             ErrandCategoryMapper errandCategoryMapper,
+                            ErrandOrderAddressMapper errandOrderAddressMapper,
+                            ErrandOrderDetailMapper errandOrderDetailMapper,
+                            PaymentOrderMapper paymentOrderMapper,
                             OrderStatusLogMapper orderStatusLogMapper,
+                            OrderEvaluationMapper orderEvaluationMapper,
                             RunnerAuthMapper runnerAuthMapper,
                             RefundRecordMapper refundRecordMapper,
                             RunnerIncomeRecordMapper runnerIncomeRecordMapper) {
         this.errandOrderMapper = errandOrderMapper;
         this.errandCategoryMapper = errandCategoryMapper;
+        this.errandOrderAddressMapper = errandOrderAddressMapper;
+        this.errandOrderDetailMapper = errandOrderDetailMapper;
+        this.paymentOrderMapper = paymentOrderMapper;
         this.orderStatusLogMapper = orderStatusLogMapper;
+        this.orderEvaluationMapper = orderEvaluationMapper;
         this.runnerAuthMapper = runnerAuthMapper;
         this.refundRecordMapper = refundRecordMapper;
         this.runnerIncomeRecordMapper = runnerIncomeRecordMapper;
@@ -108,7 +129,7 @@ public class OrderServiceImpl implements OrderService {
         }
 
         BigDecimal baseFee = category.getBaseFee() != null ? category.getBaseFee() : BigDecimal.ZERO;
-        BigDecimal distanceFee = calculateDistanceFee(category.getDistanceFeeRule(), request.getDistanceKm());
+        BigDecimal distanceFee = FeeRuleUtil.calculateDistanceFee(objectMapper, category.getDistanceFeeRule(), request.getDistanceKm());
         BigDecimal weightFee = BigDecimal.ZERO;
         BigDecimal timeFee = BigDecimal.ZERO;
         BigDecimal tipFee = request.getTipFee() != null ? request.getTipFee() : BigDecimal.ZERO;
@@ -116,6 +137,7 @@ public class OrderServiceImpl implements OrderService {
         BigDecimal platformCommission = BigDecimal.ZERO;
         BigDecimal estimatedRunnerIncome = orderAmount;
 
+        LocalDateTime now = LocalDateTime.now();
         String orderNo = "ER" + IdWorker.getIdStr();
 
         ErrandOrder order = new ErrandOrder();
@@ -144,8 +166,112 @@ public class OrderServiceImpl implements OrderService {
         order.setPayStatus(PayStatusEnum.UNPAID.getCode());
         order.setSettlementStatus(SettlementStatusEnum.PENDING.getCode());
         order.setDeadlineTime(request.getDeadlineTime());
+        // 费用快照
+        order.setFeeRuleVersion(category.getFeeRuleVersion());
+        order.setFeeDetail(buildFeeDetailJson(baseFee, distanceFee, weightFee, timeFee, tipFee,
+                orderAmount, platformCommission, estimatedRunnerIncome, request.getDistanceKm(),
+                category.getFeeRuleVersion()));
+        // 附件与联系人
+        order.setAttachmentUrls(request.getAttachmentUrls());
+        order.setContactName(request.getContactName() != null ? request.getContactName()
+                : request.getPickupContactName());
+        order.setContactPhone(request.getContactPhone() != null ? request.getContactPhone()
+                : request.getPickupContactPhone());
+        // 距离兜底字段（不接地图API）
+        order.setStraightDistanceKm(request.getDistanceKm());
+        order.setRouteDistanceKm(null);
+        order.setRouteDurationSec(null);
+        order.setDistanceSource(2); // 2=直线兜底，不接地图时用 straightDistanceKm
+        boolean coordsComplete = request.getPickupLng() != null && request.getPickupLat() != null
+                && request.getDeliveryLng() != null && request.getDeliveryLat() != null;
+        order.setDistanceCalcStatus(coordsComplete ? 1 : 0);
+        order.setMapProvider(9);
+        order.setRouteStrategy(request.getRouteStrategy());
+        order.setDistanceCalcTime(coordsComplete ? now : null);
+        order.setCreateTime(now);
+        order.setUpdateTime(now);
 
         errandOrderMapper.insert(order);
+
+        // 写入起点地址快照
+        insertOrderAddress(order.getId(), order.getOrderNo(), now, userId,
+                1, // addressRole = 起点
+                request.getPickupAddressSource(),
+                request.getPickupSourceRefId(),
+                request.getPickupMapPoiId(),
+                request.getPickupContactName(),
+                request.getPickupContactPhone(),
+                request.getPickupCampusName(),
+                request.getPickupBuildingName(),
+                request.getPickupAddress(),
+                request.getPickupFormattedAddress(),
+                request.getPickupProvinceName(),
+                request.getPickupCityName(),
+                request.getPickupDistrictName(),
+                request.getPickupAdcode(),
+                request.getPickupLng(),
+                request.getPickupLat());
+
+        // 写入终点地址快照
+        insertOrderAddress(order.getId(), order.getOrderNo(), now, userId,
+                2, // addressRole = 终点
+                request.getDeliveryAddressSource(),
+                request.getDeliverySourceRefId(),
+                request.getDeliveryMapPoiId(),
+                request.getDeliveryContactName(),
+                request.getDeliveryContactPhone(),
+                request.getDeliveryCampusName(),
+                request.getDeliveryBuildingName(),
+                request.getDeliveryAddress(),
+                request.getDeliveryFormattedAddress(),
+                request.getDeliveryProvinceName(),
+                request.getDeliveryCityName(),
+                request.getDeliveryDistrictName(),
+                request.getDeliveryAdcode(),
+                request.getDeliveryLng(),
+                request.getDeliveryLat());
+
+        // 写入分类扩展详情
+        ErrandOrderDetail orderDetail = new ErrandOrderDetail();
+        orderDetail.setOrderId(order.getId());
+        orderDetail.setOrderNo(order.getOrderNo());
+        // categoryCode 从已查询的分类实体获取，不从前端请求传入
+        orderDetail.setCategoryCode(category.getCategoryCode());
+        // 快递字段
+        orderDetail.setExpressCompany(request.getExpressCompany());
+        orderDetail.setExpressStation(request.getExpressStation());
+        orderDetail.setExpressNo(request.getExpressNo());
+        orderDetail.setExpressPickupCode(request.getExpressPickupCode());
+        orderDetail.setExpressPhoneSuffix(request.getExpressPhoneSuffix());
+        orderDetail.setPackageCount(request.getPackageCount() != null ? request.getPackageCount() : 1);
+        orderDetail.setPackageWeightKg(request.getPackageWeightKg());
+        orderDetail.setPackageSize(request.getPackageSize());
+        // 外卖字段
+        orderDetail.setTakeawayPlatform(request.getTakeawayPlatform());
+        orderDetail.setTakeawayOrderNo(request.getTakeawayOrderNo());
+        orderDetail.setTakeawayPickupCode(request.getTakeawayPickupCode());
+        orderDetail.setTakeawayPhoneSuffix(request.getTakeawayPhoneSuffix());
+        orderDetail.setMerchantName(request.getMerchantName());
+        orderDetail.setMerchantPhone(request.getMerchantPhone());
+        orderDetail.setFoodItemCount(request.getFoodItemCount());
+        orderDetail.setExpectedPickupTime(request.getExpectedPickupTime());
+        orderDetail.setNeedInsulation(request.getNeedInsulation() != null ? request.getNeedInsulation() : 0);
+        // 代买字段
+        orderDetail.setShoppingItems(request.getShoppingItems());
+        orderDetail.setShoppingBudget(request.getShoppingBudget());
+        orderDetail.setAllowPriceAdjust(request.getAllowPriceAdjust() != null ? request.getAllowPriceAdjust() : 0);
+        // 资料字段
+        orderDetail.setDocumentName(request.getDocumentName());
+        orderDetail.setDocumentCount(request.getDocumentCount());
+        orderDetail.setDocumentRemark(request.getDocumentRemark());
+        // 帮办字段
+        orderDetail.setHelpType(request.getHelpType());
+        orderDetail.setHelpContent(request.getHelpContent());
+        orderDetail.setCreateTime(now);
+        orderDetail.setUpdateTime(now);
+        orderDetail.setCreateBy(userId);
+        orderDetail.setUpdateBy(userId);
+        errandOrderDetailMapper.insert(orderDetail);
 
         OrderStatusLog statusLog = new OrderStatusLog();
         statusLog.setOrderId(order.getId());
@@ -155,6 +281,8 @@ public class OrderServiceImpl implements OrderService {
         statusLog.setTriggerAction(CREATE_ORDER_ACTION);
         statusLog.setOperatorUserId(userId);
         statusLog.setOperatorRole(OPERATOR_ROLE_STUDENT);
+        statusLog.setCreateTime(now);
+        statusLog.setUpdateTime(now);
 
         orderStatusLogMapper.insert(statusLog);
 
@@ -256,58 +384,116 @@ public class OrderServiceImpl implements OrderService {
                 .cancelTime(baseVO.getCancelTime())
                 .cancelReason(baseVO.getCancelReason())
                 .appealFlag(baseVO.getAppealFlag())
+                .contactName(order.getContactName())
+                .contactPhone(order.getContactPhone())
                 .createTime(baseVO.getCreateTime())
                 .updateTime(baseVO.getUpdateTime())
                 .statusLogs(logVOs)
                 .build();
 
+        // 查询地址快照，查询不到不抛异常
+        LambdaQueryWrapper<ErrandOrderAddress> addrWrapper = new LambdaQueryWrapper<>();
+        addrWrapper.eq(ErrandOrderAddress::getOrderId, orderId);
+        List<ErrandOrderAddress> addresses = errandOrderAddressMapper.selectList(addrWrapper);
+        for (ErrandOrderAddress addr : addresses) {
+            if (Integer.valueOf(1).equals(addr.getAddressRole())) {
+                detailVO.setPickupAddressDetail(addr);
+            } else if (Integer.valueOf(2).equals(addr.getAddressRole())) {
+                detailVO.setDeliveryAddressDetail(addr);
+            }
+        }
+
+        // 查询分类扩展详情，查不到不抛异常
+        LambdaQueryWrapper<ErrandOrderDetail> detailWrapper = new LambdaQueryWrapper<>();
+        detailWrapper.eq(ErrandOrderDetail::getOrderId, orderId);
+        ErrandOrderDetail orderDetail = errandOrderDetailMapper.selectOne(detailWrapper);
+        detailVO.setOrderDetail(orderDetail);
+
+        // 查询评价ID，前端据此隐藏已评价订单的评价入口。
+        LambdaQueryWrapper<OrderEvaluation> evaluationWrapper = new LambdaQueryWrapper<>();
+        evaluationWrapper.eq(OrderEvaluation::getOrderId, orderId);
+        OrderEvaluation evaluation = orderEvaluationMapper.selectOne(evaluationWrapper);
+        if (evaluation != null) {
+            detailVO.setEvaluationId(evaluation.getId());
+        }
+
         return detailVO;
     }
 
     /**
-     * 根据距离收费规则JSON计算距离费用
+     * 插入订单地址快照
      * <p>
-     * 规则格式为JSON数组：[{"min":0,"max":1,"fee":0},{"min":1,"max":3,"fee":2},...]
-     * max=null表示无上限。规则不匹配或JSON解析失败时抛出BusinessException。
+     * 将订单的起点或终点地址信息写入 errand_order_address 表。
+     * 经纬度都不为空时 geocodeStatus=1（解析成功），否则为 0（未解析）。
      * </p>
      */
-    private BigDecimal calculateDistanceFee(String ruleJson, BigDecimal distanceKm) {
-        if (ruleJson == null || ruleJson.trim().isEmpty()) {
-            throw new BusinessException(ErrorCode.CATEGORY_INVALID_FEE_RULE, "分类距离收费规则未配置");
+    private void insertOrderAddress(Long orderId, String orderNo, LocalDateTime now, Long userId,
+                                    Integer addressRole, Integer addressSource, Long sourceRefId,
+                                    String mapPoiId, String contactName, String contactPhone,
+                                    String campusName, String buildingName, String detailAddress,
+                                    String formattedAddress, String provinceName, String cityName,
+                                    String districtName, String adcode,
+                                    java.math.BigDecimal longitude, java.math.BigDecimal latitude) {
+        ErrandOrderAddress addr = new ErrandOrderAddress();
+        addr.setOrderId(orderId);
+        addr.setAddressRole(addressRole);
+        addr.setAddressSource(addressSource != null ? addressSource : 1);
+        addr.setMapProvider(9); // 9 = 系统兜底，未接地图
+        addr.setMapPoiId(mapPoiId);
+        addr.setSourceRefId(sourceRefId);
+        addr.setContactName(contactName);
+        addr.setContactPhone(contactPhone);
+        addr.setCampusName(campusName);
+        addr.setBuildingName(buildingName);
+        addr.setDetailAddress(detailAddress);
+        addr.setFormattedAddress(formattedAddress);
+        addr.setProvinceName(provinceName);
+        addr.setCityName(cityName);
+        addr.setDistrictName(districtName);
+        addr.setAdcode(adcode);
+        addr.setLongitude(longitude);
+        addr.setLatitude(latitude);
+        addr.setCoordType("GCJ02");
+        // 经纬度都不为空 → 解析成功，否则未解析
+        if (longitude != null && latitude != null) {
+            addr.setGeocodeStatus(1);
+            addr.setGeocodeTime(now);
+        } else {
+            addr.setGeocodeStatus(0);
+            addr.setGeocodeTime(null);
         }
+        addr.setCreateTime(now);
+        addr.setUpdateTime(now);
+        addr.setCreateBy(userId);
+        addr.setUpdateBy(userId);
+        errandOrderAddressMapper.insert(addr);
+    }
 
+    /**
+     * 构建费用计算明细 JSON 字符串，使用 Jackson 保证字符正确转义
+     */
+    private String buildFeeDetailJson(BigDecimal baseFee, BigDecimal distanceFee, BigDecimal weightFee,
+                                       BigDecimal timeFee, BigDecimal tipFee, BigDecimal orderAmount,
+                                       BigDecimal platformCommission, BigDecimal estimatedRunnerIncome,
+                                       BigDecimal distanceKm, String feeRuleVersion) {
         try {
-            JsonNode rules = objectMapper.readTree(ruleJson);
-            if (!rules.isArray() || rules.size() == 0) {
-                throw new BusinessException(ErrorCode.CATEGORY_INVALID_FEE_RULE, "距离收费规则格式错误");
-            }
-
-            if (distanceKm == null) {
-                throw new BusinessException(ErrorCode.BAD_REQUEST, "预估距离不能为空");
-            }
-
-            for (JsonNode rule : rules) {
-                JsonNode minNode = rule.get("min");
-                JsonNode maxNode = rule.get("max");
-                JsonNode feeNode = rule.get("fee");
-
-                double min = minNode != null ? minNode.asDouble() : 0;
-                Double max = (maxNode != null && !maxNode.isNull()) ? maxNode.asDouble() : null;
-                double distanceValue = distanceKm.doubleValue();
-
-                if (distanceValue >= min && (max == null || distanceValue < max)) {
-                    return feeNode != null ? BigDecimal.valueOf(feeNode.asDouble()) : BigDecimal.ZERO;
-                }
-            }
-
-            throw new BusinessException(ErrorCode.CATEGORY_INVALID_FEE_RULE,
-                    "距离" + distanceKm + "km未匹配到收费规则");
-        } catch (BusinessException e) {
-            throw e;
+            java.util.LinkedHashMap<String, Object> map = new java.util.LinkedHashMap<>();
+            map.put("baseFee", baseFee != null ? baseFee.toPlainString() : null);
+            map.put("distanceFee", distanceFee != null ? distanceFee.toPlainString() : null);
+            map.put("weightFee", weightFee != null ? weightFee.toPlainString() : null);
+            map.put("timeFee", timeFee != null ? timeFee.toPlainString() : null);
+            map.put("tipFee", tipFee != null ? tipFee.toPlainString() : null);
+            map.put("orderAmount", orderAmount != null ? orderAmount.toPlainString() : null);
+            map.put("platformCommission", platformCommission != null ? platformCommission.toPlainString() : null);
+            map.put("estimatedRunnerIncome", estimatedRunnerIncome != null ? estimatedRunnerIncome.toPlainString() : null);
+            map.put("distanceKm", distanceKm != null ? distanceKm.toPlainString() : null);
+            map.put("feeRuleVersion", feeRuleVersion);
+            return objectMapper.writeValueAsString(map);
         } catch (Exception e) {
-            throw new BusinessException(ErrorCode.CATEGORY_INVALID_FEE_RULE, "距离收费规则解析失败");
+            return "{}";
         }
     }
+
 
     /**
      * 查询任务大厅（跑腿员可接的订单）
@@ -332,7 +518,7 @@ public class OrderServiceImpl implements OrderService {
                 .eq(ErrandOrder::getPayStatus, PayStatusEnum.PAID.getCode())
                 .isNull(ErrandOrder::getRunnerId);
 
-        // 3. 如 categoryId 不为空，添加 categoryId 筛选
+        // 2. 如 categoryId 不为空，添加 categoryId 筛选
         if (categoryId != null) {
             wrapper.eq(ErrandOrder::getCategoryId, categoryId);
         }
@@ -340,7 +526,7 @@ public class OrderServiceImpl implements OrderService {
         wrapper.orderByDesc(ErrandOrder::getCreateTime);
         Page<ErrandOrder> resultPage = errandOrderMapper.selectPage(pageParam, wrapper);
 
-        // 4. 分页查询并返回 OrderVO 列表
+        // 3. 分页查询并返回 OrderVO 列表
         List<OrderVO> voList = new ArrayList<>();
         for (ErrandOrder order : resultPage.getRecords()) {
             ErrandCategory category = errandCategoryMapper.selectById(order.getCategoryId());
@@ -398,6 +584,7 @@ public class OrderServiceImpl implements OrderService {
 
         // 3. 使用条件更新：UPDATE errand_order SET runner_id=?, order_status=?, accept_time=?
         //    WHERE id=? AND runner_id IS NULL AND order_status=? AND pay_status=?
+        LocalDateTime now = LocalDateTime.now();
         UpdateWrapper<ErrandOrder> updateWrapper = new UpdateWrapper<>();
         updateWrapper.eq("id", orderId)
                 .isNull("runner_id")
@@ -405,7 +592,8 @@ public class OrderServiceImpl implements OrderService {
                 .eq("pay_status", PayStatusEnum.PAID.getCode())
                 .set("runner_id", runnerId)
                 .set("order_status", OrderStatusEnum.ACCEPTED.getCode())
-                .set("accept_time", LocalDateTime.now());
+                .set("accept_time", now)
+                .set("update_time", now);
 
         int updatedRows = errandOrderMapper.update(null, updateWrapper);
 
@@ -423,6 +611,8 @@ public class OrderServiceImpl implements OrderService {
         statusLog.setTriggerAction(ACCEPT_ORDER_ACTION);
         statusLog.setOperatorUserId(runnerId);
         statusLog.setOperatorRole(OPERATOR_ROLE_RUNNER);
+        statusLog.setCreateTime(now);
+        statusLog.setUpdateTime(now);
 
         orderStatusLogMapper.insert(statusLog);
     }
@@ -513,6 +703,8 @@ public class OrderServiceImpl implements OrderService {
             incomeRecord.setRunnerId(order.getRunnerId());
             incomeRecord.setIncomeAmount(order.getEstimatedRunnerIncome());
             incomeRecord.setSettlementStatus(SettlementStatusEnum.PENDING.getCode());
+            incomeRecord.setCreateTime(LocalDateTime.now());
+            incomeRecord.setUpdateTime(incomeRecord.getCreateTime());
             runnerIncomeRecordMapper.insert(incomeRecord);
         }
     }
@@ -579,9 +771,13 @@ public class OrderServiceImpl implements OrderService {
         } else {
             uw.eq("runner_id", userId);
         }
+        LocalDateTime now = LocalDateTime.now();
         uw.set("order_status", OrderStatusEnum.CANCELLED.getCode())
-          .set("cancel_time", LocalDateTime.now())
-          .set("cancel_reason", request.getCancelReason());
+          .set("cancel_time", now)
+          .set("update_time", now)
+          .set("cancel_reason", request.getCancelReason())
+          .set("cancel_user_id", userId)
+          .set("cancel_role", isPublisher ? OPERATOR_ROLE_STUDENT : OPERATOR_ROLE_RUNNER);
 
         int rows = errandOrderMapper.update(null, uw);
         if (rows == 0) {
@@ -604,6 +800,13 @@ public class OrderServiceImpl implements OrderService {
             refund.setRefundAmount(order.getOrderAmount());
             refund.setRefundReason(request.getCancelReason());
             refund.setRefundStatus(RefundStatusEnum.PENDING.getCode());
+            // 关联支付单号快照
+            LambdaQueryWrapper<PaymentOrder> payWrapper = new LambdaQueryWrapper<>();
+            payWrapper.eq(PaymentOrder::getOrderId, orderId);
+            PaymentOrder payOrder = paymentOrderMapper.selectOne(payWrapper);
+            refund.setPayNo(payOrder != null ? payOrder.getPayNo() : null);
+            refund.setCreateTime(LocalDateTime.now());
+            refund.setUpdateTime(refund.getCreateTime());
             refundRecordMapper.insert(refund);
         }
     }
@@ -638,7 +841,8 @@ public class OrderServiceImpl implements OrderService {
                 uw.set(timeField, actionTime);
             }
         }
-        uw.set("order_status", toStatus);
+        uw.set("order_status", toStatus)
+          .set("update_time", LocalDateTime.now());
 
         int rows = errandOrderMapper.update(null, uw);
         if (rows == 0) {
@@ -660,6 +864,8 @@ public class OrderServiceImpl implements OrderService {
         statusLog.setTriggerAction(triggerAction);
         statusLog.setOperatorUserId(operatorUserId);
         statusLog.setOperatorRole(operatorRole);
+        statusLog.setCreateTime(LocalDateTime.now());
+        statusLog.setUpdateTime(statusLog.getCreateTime());
         orderStatusLogMapper.insert(statusLog);
     }
 }

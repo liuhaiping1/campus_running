@@ -1,5 +1,6 @@
 package com.example.backend.controller.appeal;
 
+import com.example.backend.annotation.AuditLogRecord;
 import com.example.backend.common.Result;
 import com.example.backend.dto.request.AppealSubmitRequest;
 import com.example.backend.security.LoginUser;
@@ -39,6 +40,7 @@ public class AppealController {
      * @param request appeal submit request
      * @return created appeal ID
      */
+    @AuditLogRecord(module = "APPEAL", action = "SUBMIT", bizType = "APPEAL", description = "提交申诉")
     @PostMapping
     public Result<Long> submit(@AuthenticationPrincipal LoginUser loginUser,
                                @Valid @RequestBody AppealSubmitRequest request) {

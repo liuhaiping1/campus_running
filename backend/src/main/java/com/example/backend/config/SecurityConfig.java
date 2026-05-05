@@ -47,6 +47,12 @@ public class SecurityConfig {
             .authorizeHttpRequests(auth -> auth
                 // 公开接口
                 .requestMatchers("/api/auth/**").permitAll()
+                .requestMatchers("/api/system/dict/**").permitAll()
+                .requestMatchers("/api/notice/list").permitAll()
+                .requestMatchers("/api/category/list").permitAll()
+                .requestMatchers("/api/campus-location/list").permitAll()
+                .requestMatchers("/api/pay/notify").permitAll()
+                .requestMatchers("/uploads/**").permitAll()
                 .requestMatchers("/swagger-ui/**", "/v3/api-docs/**", "/swagger-ui.html").permitAll()
                 // 管理员接口需要ADMIN角色
                 .requestMatchers("/api/admin/**").hasRole("ADMIN")

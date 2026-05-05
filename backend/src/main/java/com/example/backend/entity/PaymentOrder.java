@@ -24,6 +24,11 @@ public class PaymentOrder implements Serializable {
 
     private BigDecimal payAmount;
 
+    /**
+     * 支付单过期时间
+     */
+    private LocalDateTime expireTime;
+
     private Integer payStatus;
 
     private String tradeNo;

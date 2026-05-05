@@ -1,6 +1,7 @@
 package com.example.backend.controller.admin;
 
 import com.baomidou.mybatisplus.core.metadata.IPage;
+import com.example.backend.annotation.AuditLogRecord;
 import com.example.backend.common.Result;
 import com.example.backend.dto.request.RefundApproveRequest;
 import com.example.backend.security.LoginUser;
@@ -57,6 +58,7 @@ public class RefundAdminController {
      * @param request   approval request
      * @return approval result
      */
+    @AuditLogRecord(module = "REFUND", action = "APPROVE", bizType = "REFUND", description = "审核退款")
     @PostMapping("/{id}/approve")
     public Result<String> approve(@PathVariable Long id,
                                   @AuthenticationPrincipal LoginUser loginUser,

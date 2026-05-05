@@ -1,0 +1,46 @@
+/* CSS 变量定义，遵循 docs/UI.md 设计 Token */
+:root {
+  /* 颜色体系 */
+  --color-primary: #409EFF;
+  --color-success: #67C23A;
+  --color-warning: #E6A23C;
+  --color-danger: #F56C6C;
+  --color-info: #909399;
+
+  /* 背景与边框 */
+  --bg-page: #f5f7fa;
+  --bg-card: #ffffff;
+  --border-color: #e4e7ed;
+
+  /* 文本颜色 */
+  --text-primary: #303133;
+  --text-secondary: #909399;
+  --text-placeholder: #c0c4cc;
+
+  /* 圆角 */
+  --radius-card: 8px;
+  --radius-button: 4px;
+
+  /* 阴影 */
+  --shadow-card: 0 6px 18px rgba(0, 0, 0, 0.06);
+  --shadow-light: 0 2px 8px rgba(0, 0, 0, 0.04);
+
+  /* 间距步进（8px 基准） */
+  --spacing-xs: 8px;
+  --spacing-sm: 12px;
+  --spacing-md: 16px;
+  --spacing-lg: 24px;
+  --spacing-xl: 32px;
+
+  /* 字号 */
+  --font-title-lg: 22px;
+  --font-title: 16px;
+  --font-body: 14px;
+  --font-sm: 12px;
+
+  /* 内容区最大宽度 */
+  --content-max-width: 1200px;
+
+  /* 断点 */
+  --breakpoint-mobile: 768px;
+}

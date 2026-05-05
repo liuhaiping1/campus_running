@@ -91,6 +91,7 @@ public class MessageServiceImpl implements MessageService {
         if (!Integer.valueOf(READ).equals(message.getIsRead())) {
             message.setIsRead(READ);
             message.setReadTime(LocalDateTime.now());
+            message.setUpdateTime(message.getReadTime());
             stationMessageMapper.updateById(message);
         }
     }
@@ -106,7 +107,8 @@ public class MessageServiceImpl implements MessageService {
         wrapper.eq(StationMessage::getReceiverUserId, userId)
                 .eq(StationMessage::getIsRead, UNREAD)
                 .set(StationMessage::getIsRead, READ)
-                .set(StationMessage::getReadTime, LocalDateTime.now());
+                .set(StationMessage::getReadTime, LocalDateTime.now())
+                .set(StationMessage::getUpdateTime, LocalDateTime.now());
         stationMessageMapper.update(null, wrapper);
     }
 }

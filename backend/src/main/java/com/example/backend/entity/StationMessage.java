@@ -45,6 +45,11 @@ public class StationMessage implements Serializable {
     private String content;
 
     /**
+     * 消息跳转地址
+     */
+    private String jumpUrl;
+
+    /**
      * 消息级别：1普通 2重要
      */
     private Integer messageLevel;

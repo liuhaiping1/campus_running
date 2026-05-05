@@ -1,6 +1,7 @@
 package com.example.backend.controller.admin;
 
 import com.baomidou.mybatisplus.core.metadata.IPage;
+import com.example.backend.annotation.AuditLogRecord;
 import com.example.backend.common.Result;
 import com.example.backend.dto.request.AppealHandleRequest;
 import com.example.backend.security.LoginUser;
@@ -60,6 +61,7 @@ public class AppealAdminController {
      * @param request appeal handle request
      * @return operation result
      */
+    @AuditLogRecord(module = "APPEAL", action = "HANDLE", bizType = "APPEAL", description = "处理申诉")
     @PostMapping("/{id}/handle")
     public Result<Void> handle(@PathVariable Long id,
                                @AuthenticationPrincipal LoginUser loginUser,

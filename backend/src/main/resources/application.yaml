@@ -29,6 +29,12 @@ spring:
     date-format: yyyy-MM-dd HH:mm:ss
     time-zone: GMT+8
 
+  # 文件上传 multipart 配置
+  servlet:
+    multipart:
+      max-file-size: 10MB
+      max-request-size: 10MB
+
 # MyBatis-Plus配置
 mybatis-plus:
   mapper-locations: classpath*:/mapper/**/*.xml
@@ -54,6 +60,19 @@ springdoc:
   swagger-ui:
     path: /swagger-ui.html
     enabled: true
+
+# 高德地图配置（web-service-key 在 application-dev.yml 中配置，生产环境通过环境变量注入）
+amap:
+  base-url: ${AMAP_BASE_URL:https://restapi.amap.com}
+  timeout-ms: ${AMAP_TIMEOUT_MS:5000}
+  enabled: ${AMAP_ENABLED:true}
+
+# 文件上传配置
+upload:
+  local-dir: ${UPLOAD_LOCAL_DIR:uploads}
+  public-prefix: ${UPLOAD_PUBLIC_PREFIX:/uploads}
+  max-size-mb: ${UPLOAD_MAX_SIZE_MB:5}
+  allowed-types: ${UPLOAD_ALLOWED_TYPES:jpg,jpeg,png,webp,pdf}
 
 # 服务端口
 server:

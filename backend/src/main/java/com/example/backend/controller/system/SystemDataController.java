@@ -2,6 +2,7 @@ package com.example.backend.controller.system;
 
 import com.example.backend.common.Result;
 import com.example.backend.service.SystemDataService;
+import com.example.backend.vo.CampusLocationVO;
 import com.example.backend.vo.CategoryVO;
 import com.example.backend.vo.DictDataVO;
 import com.example.backend.vo.NoticePageVO;
@@ -68,5 +69,19 @@ public class SystemDataController {
     @GetMapping("/category/list")
     public Result<List<CategoryVO>> listCategories() {
         return Result.success(systemDataService.listCategories());
+    }
+
+    /**
+     * 查询启用状态的校园常用地点
+     *
+     * @param locationType 地点类型筛选，可为空
+     * @param keyword      关键词模糊搜索，可为空
+     * @return 校园地点列表
+     */
+    @GetMapping("/campus-location/list")
+    public Result<List<CampusLocationVO>> listCampusLocations(
+            @RequestParam(required = false) Integer locationType,
+            @RequestParam(required = false) String keyword) {
+        return Result.success(systemDataService.listCampusLocations(locationType, keyword));
     }
 }

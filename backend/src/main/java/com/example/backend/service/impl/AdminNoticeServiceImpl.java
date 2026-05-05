@@ -103,6 +103,7 @@ public class AdminNoticeServiceImpl implements AdminNoticeService {
      */
     @Override
     public NoticeVO create(Long adminUserId, NoticeSaveRequest request) {
+        LocalDateTime now = LocalDateTime.now();
         SystemNotice notice = new SystemNotice();
         notice.setNoticeTitle(request.getNoticeTitle());
         notice.setNoticeContent(request.getNoticeContent());
@@ -118,10 +119,13 @@ public class AdminNoticeServiceImpl implements AdminNoticeService {
         notice.setNoticeType(type);
         notice.setNoticeStatus(status);
         notice.setPublisherId(adminUserId);
+        notice.setCreateTime(now);
+        notice.setUpdateTime(now);
+
 
         // 如果直接发布，设置发布时间
         if (status == NoticeStatusEnum.PUBLISHED.getCode()) {
-            notice.setPublishTime(LocalDateTime.now());
+            notice.setPublishTime(now);
         }
 
         systemNoticeMapper.insert(notice);
@@ -162,6 +166,7 @@ public class AdminNoticeServiceImpl implements AdminNoticeService {
         notice.setNoticeContent(request.getNoticeContent());
         notice.setNoticeType(newType);
         notice.setNoticeStatus(newStatus);
+        notice.setUpdateTime(LocalDateTime.now());
 
         // 从非发布状态改为已发布时，设置发布时间
         if (oldStatus != NoticeStatusEnum.PUBLISHED.getCode()
@@ -206,6 +211,7 @@ public class AdminNoticeServiceImpl implements AdminNoticeService {
         validateNoticeStatus(newStatus);
 
         notice.setNoticeStatus(newStatus);
+        notice.setUpdateTime(LocalDateTime.now());
 
         // 改为已发布：若尚未设置发布时间则自动设置
         if (newStatus == NoticeStatusEnum.PUBLISHED.getCode()

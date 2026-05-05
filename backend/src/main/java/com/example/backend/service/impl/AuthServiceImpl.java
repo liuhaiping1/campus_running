@@ -95,11 +95,14 @@ public class AuthServiceImpl implements AuthService {
 
         // 3. 创建新用户
         SysUser sysUser = new SysUser();
+        LocalDateTime now = LocalDateTime.now();
         sysUser.setUsername(request.getUsername());
         sysUser.setPassword(passwordEncoder.encode(request.getPassword()));
         sysUser.setRealName(request.getRealName());
         sysUser.setPhone(request.getPhone());
         sysUser.setUserStatus(1);
+        sysUser.setCreateTime(now);
+        sysUser.setUpdateTime(now);
         sysUserMapper.insert(sysUser);
 
         // 4. 查询STUDENT角色（仅启用的角色，逻辑删除由@TableLogic自动过滤）
@@ -117,8 +120,10 @@ public class AuthServiceImpl implements AuthService {
         sysUserRole.setRoleId(studentRole.getId());
         sysUserRole.setRoleCode("STUDENT");
         sysUserRole.setGrantSource(1);
-        sysUserRole.setGrantTime(LocalDateTime.now());
+        sysUserRole.setGrantTime(now);
         sysUserRole.setRoleStatus(1);
+        sysUserRole.setCreateTime(now);
+        sysUserRole.setUpdateTime(now);
         sysUserRoleMapper.insert(sysUserRole);
 
         return sysUser.getId();
@@ -161,7 +166,9 @@ public class AuthServiceImpl implements AuthService {
         }
 
         // 4. 更新最后登录时间
-        sysUser.setLastLoginTime(LocalDateTime.now());
+        LocalDateTime now = LocalDateTime.now();
+        sysUser.setLastLoginTime(now);
+        sysUser.setUpdateTime(now);
         sysUserMapper.updateById(sysUser);
 
         // 5. 查询用户角色列表

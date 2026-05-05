@@ -7,9 +7,14 @@ import com.example.backend.common.ErrorCode;
 import com.example.backend.common.exception.BusinessException;
 import com.example.backend.entity.ErrandCategory;
 import com.example.backend.entity.ErrandOrder;
+import com.example.backend.entity.ErrandOrderAddress;
+import com.example.backend.entity.ErrandOrderDetail;
 import com.example.backend.entity.OrderStatusLog;
 import com.example.backend.mapper.ErrandCategoryMapper;
+import com.example.backend.mapper.ErrandOrderAddressMapper;
+import com.example.backend.mapper.ErrandOrderDetailMapper;
 import com.example.backend.mapper.ErrandOrderMapper;
+import com.example.backend.mapper.OrderEvaluationMapper;
 import com.example.backend.mapper.OrderStatusLogMapper;
 import com.example.backend.service.impl.AdminOrderServiceImpl;
 import com.example.backend.vo.OrderDetailVO;
@@ -66,6 +71,18 @@ class AdminOrderServiceTest {
     /** Mock 状态日志 Mapper */
     @Mock
     private OrderStatusLogMapper orderStatusLogMapper;
+
+    /** Mock 订单地址快照 Mapper */
+    @Mock
+    private ErrandOrderAddressMapper errandOrderAddressMapper;
+
+    /** Mock 订单分类扩展详情 Mapper */
+    @Mock
+    private ErrandOrderDetailMapper errandOrderDetailMapper;
+
+    /** Mock 订单评价 Mapper */
+    @Mock
+    private OrderEvaluationMapper orderEvaluationMapper;
 
     /** 自动注入 Mock 的被测对象 */
     @InjectMocks
@@ -340,6 +357,8 @@ class AdminOrderServiceTest {
             order.setOrderAmount(BigDecimal.valueOf(7.00));
             order.setPlatformCommission(BigDecimal.ZERO);
             order.setEstimatedRunnerIncome(BigDecimal.valueOf(7.00));
+            order.setContactName("李四");
+            order.setContactPhone("13800001111");
             order.setPayStatus(2);
             order.setSettlementStatus(0);
 
@@ -365,6 +384,10 @@ class AdminOrderServiceTest {
             // 管理员可以看到非本人订单
             assertEquals(Long.valueOf(1L), detail.getPublisherId(), "发布人ID应为1");
             assertEquals(Long.valueOf(2L), detail.getRunnerId(), "接单人ID应为2");
+
+            // 验证联系方式仅出现在订单详情
+            assertEquals("李四", detail.getContactName(), "联系人姓名应一致");
+            assertEquals("13800001111", detail.getContactPhone(), "联系人手机号应一致");
 
             // 验证状态日志被返回
             assertNotNull(detail.getStatusLogs(), "状态流转日志不应为null");
@@ -478,6 +501,107 @@ class AdminOrderServiceTest {
                     "第2条日志应为PAY_SUCCESS");
             assertEquals("ACCEPT_ORDER", detail.getStatusLogs().get(2).getTriggerAction(),
                     "第3条日志应为ACCEPT_ORDER");
+        }
+
+        /**
+         * 管理员查订单详情应返回地址快照
+         */
+        @Test
+        @DisplayName("管理员查订单详情应返回 pickupAddressDetail 和 deliveryAddressDetail")
+        void shouldReturnAddressDetailsForAdmin() {
+            Long orderId = 100L;
+            ErrandOrder order = buildOrder(orderId, "ER001", 1L, 2L, 1L, 2);
+            when(errandOrderMapper.selectById(orderId)).thenReturn(order);
+            when(errandCategoryMapper.selectById(1L)).thenReturn(testCategory);
+            when(orderStatusLogMapper.selectList(any(LambdaQueryWrapper.class))).thenReturn(new ArrayList<>());
+
+            // 地址快照
+            ErrandOrderAddress pickup = new ErrandOrderAddress();
+            pickup.setOrderId(orderId);
+            pickup.setAddressRole(1);
+            pickup.setDetailAddress("取件点地址");
+            ErrandOrderAddress delivery = new ErrandOrderAddress();
+            delivery.setOrderId(orderId);
+            delivery.setAddressRole(2);
+            delivery.setDetailAddress("送达点地址");
+            when(errandOrderAddressMapper.selectList(any(LambdaQueryWrapper.class)))
+                    .thenReturn(Arrays.asList(pickup, delivery));
+            when(errandOrderDetailMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(null);
+
+            OrderDetailVO detail = adminOrderService.detail(orderId);
+
+            assertNotNull(detail.getPickupAddressDetail(), "pickupAddressDetail 不应为 null");
+            assertEquals("取件点地址", detail.getPickupAddressDetail().getDetailAddress());
+            assertNotNull(detail.getDeliveryAddressDetail(), "deliveryAddressDetail 不应为 null");
+            assertEquals("送达点地址", detail.getDeliveryAddressDetail().getDetailAddress());
+            assertNull(detail.getOrderDetail(), "无数据时 orderDetail 应为 null");
+        }
+
+        /**
+         * 管理员查订单详情地址快照缺失时不报错
+         */
+        @Test
+        @DisplayName("管理员查订单详情地址快照缺失时不报错")
+        void shouldNotThrowWhenNoAddressSnapshotForAdmin() {
+            Long orderId = 100L;
+            ErrandOrder order = buildOrder(orderId, "ER001", 1L, 2L, 1L, 2);
+            when(errandOrderMapper.selectById(orderId)).thenReturn(order);
+            when(errandCategoryMapper.selectById(1L)).thenReturn(testCategory);
+            when(orderStatusLogMapper.selectList(any(LambdaQueryWrapper.class))).thenReturn(new ArrayList<>());
+            when(errandOrderAddressMapper.selectList(any(LambdaQueryWrapper.class))).thenReturn(new ArrayList<>());
+            when(errandOrderDetailMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(null);
+
+            OrderDetailVO detail = adminOrderService.detail(orderId);
+
+            assertNotNull(detail, "没地址快照时也应正常返回");
+            assertNull(detail.getPickupAddressDetail(), "无快照时应为 null");
+            assertNull(detail.getDeliveryAddressDetail(), "无快照时应为 null");
+        }
+
+        /**
+         * 管理员查订单详情应返回分类扩展详情
+         */
+        @Test
+        @DisplayName("管理员查订单详情应返回 orderDetail")
+        void shouldReturnOrderDetailForAdmin() {
+            Long orderId = 100L;
+            ErrandOrder order = buildOrder(orderId, "ER001", 1L, 2L, 1L, 2);
+            when(errandOrderMapper.selectById(orderId)).thenReturn(order);
+            when(errandCategoryMapper.selectById(1L)).thenReturn(testCategory);
+            when(orderStatusLogMapper.selectList(any(LambdaQueryWrapper.class))).thenReturn(new ArrayList<>());
+            when(errandOrderAddressMapper.selectList(any(LambdaQueryWrapper.class))).thenReturn(new ArrayList<>());
+
+            ErrandOrderDetail mockDetail = new ErrandOrderDetail();
+            mockDetail.setOrderId(orderId);
+            mockDetail.setCategoryCode("EXPRESS_PICKUP");
+            mockDetail.setExpressNo("SF123");
+            when(errandOrderDetailMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(mockDetail);
+
+            OrderDetailVO detail = adminOrderService.detail(orderId);
+
+            assertNotNull(detail.getOrderDetail(), "orderDetail 不应为 null");
+            assertEquals("EXPRESS_PICKUP", detail.getOrderDetail().getCategoryCode());
+            assertEquals("SF123", detail.getOrderDetail().getExpressNo());
+        }
+
+        /**
+         * 管理员查订单详情分类详情缺失时不报错
+         */
+        @Test
+        @DisplayName("管理员查订单详情分类详情缺失时不报错")
+        void shouldNotThrowWhenNoOrderDetailForAdmin() {
+            Long orderId = 100L;
+            ErrandOrder order = buildOrder(orderId, "ER001", 1L, 2L, 1L, 2);
+            when(errandOrderMapper.selectById(orderId)).thenReturn(order);
+            when(errandCategoryMapper.selectById(1L)).thenReturn(testCategory);
+            when(orderStatusLogMapper.selectList(any(LambdaQueryWrapper.class))).thenReturn(new ArrayList<>());
+            when(errandOrderAddressMapper.selectList(any(LambdaQueryWrapper.class))).thenReturn(new ArrayList<>());
+            when(errandOrderDetailMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(null);
+
+            OrderDetailVO detail = adminOrderService.detail(orderId);
+
+            assertNotNull(detail, "没 detail 时也应正常返回");
+            assertNull(detail.getOrderDetail(), "无数据时 orderDetail 应为 null");
         }
     }
 

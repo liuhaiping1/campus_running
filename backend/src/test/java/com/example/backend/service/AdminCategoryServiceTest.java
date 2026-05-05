@@ -1,6 +1,7 @@
 package com.example.backend.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.example.backend.common.ErrorCode;
@@ -558,7 +559,7 @@ class AdminCategoryServiceTest {
         /**
          * 测试逻辑删除分类成功
          * <p>
-         * 分类存在时 deleteById 通过 @TableLogic 执行逻辑删除。
+         * 分类存在时显式更新 isDeleted 执行逻辑删除。
          * </p>
          */
         @Test
@@ -567,14 +568,13 @@ class AdminCategoryServiceTest {
             // Given: 分类存在
             Long categoryId = 1L;
             when(errandCategoryMapper.selectById(categoryId)).thenReturn(testCategory);
-            when(errandCategoryMapper.deleteById(categoryId)).thenReturn(1);
 
             // When: 删除分类
             adminCategoryService.delete(categoryId);
 
-            // Then: deleteById 被调用（逻辑删除）
+            // Then: 使用显式条件更新执行逻辑删除
             verify(errandCategoryMapper).selectById(categoryId);
-            verify(errandCategoryMapper).deleteById(categoryId);
+            verify(errandCategoryMapper).update(isNull(), any(UpdateWrapper.class));
         }
 
         /**
@@ -598,8 +598,8 @@ class AdminCategoryServiceTest {
             assertEquals(ErrorCode.CATEGORY_NOT_FOUND.getCode(), exception.getCode());
             assertEquals(ErrorCode.CATEGORY_NOT_FOUND.getMessage(), exception.getMessage());
 
-            // deleteById 不应被调用
-            verify(errandCategoryMapper, never()).deleteById(anyLong());
+            // 不存在时不应执行更新
+            verify(errandCategoryMapper, never()).update(isNull(), any(UpdateWrapper.class));
         }
     }
 

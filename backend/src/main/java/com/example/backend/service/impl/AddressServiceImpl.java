@@ -12,6 +12,7 @@ import com.example.backend.vo.AddressVO;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -83,8 +84,11 @@ public class AddressServiceImpl implements AddressService {
             clearDefault(userId);
         }
 
+        LocalDateTime now = LocalDateTime.now();
         UserAddress address = new UserAddress();
         fill(address, userId, request);
+        address.setCreateTime(now);
+        address.setUpdateTime(now);
         userAddressMapper.insert(address);
         return AddressVO.from(address);
     }
@@ -108,6 +112,7 @@ public class AddressServiceImpl implements AddressService {
             clearDefault(userId);
         }
         fill(address, userId, request);
+        address.setUpdateTime(LocalDateTime.now());
         userAddressMapper.updateById(address);
         return AddressVO.from(address);
     }
@@ -127,6 +132,7 @@ public class AddressServiceImpl implements AddressService {
         UserAddress address = requireOwnedAddress(userId, id);
         address.setAddressStatus(DISABLED);
         address.setIsDefault(NOT_DEFAULT);
+        address.setUpdateTime(LocalDateTime.now());
         userAddressMapper.updateById(address);
     }
 
@@ -143,6 +149,7 @@ public class AddressServiceImpl implements AddressService {
         UserAddress address = requireOwnedAddress(userId, id);
         clearDefault(userId);
         address.setIsDefault(DEFAULT);
+        address.setUpdateTime(LocalDateTime.now());
         userAddressMapper.updateById(address);
         return AddressVO.from(address);
     }
@@ -204,7 +211,8 @@ public class AddressServiceImpl implements AddressService {
         LambdaUpdateWrapper<UserAddress> wrapper = new LambdaUpdateWrapper<>();
         wrapper.eq(UserAddress::getUserId, userId)
                 .eq(UserAddress::getIsDefault, DEFAULT)
-                .set(UserAddress::getIsDefault, NOT_DEFAULT);
+                .set(UserAddress::getIsDefault, NOT_DEFAULT)
+                .set(UserAddress::getUpdateTime, LocalDateTime.now());
         userAddressMapper.update(null, wrapper);
     }
 }

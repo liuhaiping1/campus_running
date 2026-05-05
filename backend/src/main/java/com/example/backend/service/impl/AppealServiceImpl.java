@@ -71,6 +71,7 @@ public class AppealServiceImpl implements AppealService {
             throw new BusinessException(ErrorCode.APPEAL_EXISTS);
         }
 
+        LocalDateTime now = LocalDateTime.now();
         Integer beforeOrderStatus = order.getOrderStatus();
         AppealRecord appeal = new AppealRecord();
         appeal.setOrderId(request.getOrderId());
@@ -82,11 +83,14 @@ public class AppealServiceImpl implements AppealService {
         appeal.setEvidenceUrls(request.getEvidenceUrls());
         appeal.setAppealStatus(AppealStatusEnum.PENDING.getCode());
         appeal.setBeforeOrderStatus(beforeOrderStatus);
+        appeal.setCreateTime(now);
+        appeal.setUpdateTime(now);
         appealRecordMapper.insert(appeal);
 
         ErrandOrder updateOrder = new ErrandOrder();
         updateOrder.setAppealFlag(1);
         updateOrder.setOrderStatus(OrderStatusEnum.APPEALING.getCode());
+        updateOrder.setUpdateTime(now);
         LambdaUpdateWrapper<ErrandOrder> updateWrapper = new LambdaUpdateWrapper<>();
         updateWrapper.eq(ErrandOrder::getId, order.getId())
                 .eq(ErrandOrder::getOrderStatus, beforeOrderStatus);
@@ -157,7 +161,9 @@ public class AppealServiceImpl implements AppealService {
         appeal.setRefundDecision(request.getRefundDecision());
         appeal.setHandleAdminId(adminId);
         appeal.setHandleResult(request.getHandleResult());
-        appeal.setHandleTime(LocalDateTime.now());
+        LocalDateTime now = LocalDateTime.now();
+        appeal.setHandleTime(now);
+        appeal.setUpdateTime(now);
         LambdaUpdateWrapper<AppealRecord> updateWrapper = new LambdaUpdateWrapper<>();
         updateWrapper.eq(AppealRecord::getId, id)
                 .in(AppealRecord::getAppealStatus,
@@ -173,6 +179,7 @@ public class AppealServiceImpl implements AppealService {
         order.setOrderStatus(request.getResultOrderStatus() != null
                 ? request.getResultOrderStatus()
                 : appeal.getBeforeOrderStatus());
+        order.setUpdateTime(now);
         errandOrderMapper.updateById(order);
     }
 

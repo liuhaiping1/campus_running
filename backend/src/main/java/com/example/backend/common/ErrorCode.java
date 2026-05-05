@@ -25,6 +25,10 @@ public enum ErrorCode {
     ACCOUNT_DISABLED(2004, "账号已被禁用"),
     TOKEN_INVALID(2005, "Token无效"),
     TOKEN_EXPIRED(2006, "Token已过期"),
+    PHONE_FORMAT_ERROR(2007, "手机号格式不正确"),
+    OLD_PASSWORD_ERROR(2008, "旧密码不正确"),
+    PASSWORD_NOT_MATCH(2009, "两次输入的密码不一致"),
+    USER_NOT_FOUND(2010, "用户不存在"),
 
     // 跑腿认证错误 3xxx
     AUTH_NOT_FOUND(3001, "认证记录不存在"),
@@ -72,7 +76,23 @@ public enum ErrorCode {
     NOTICE_NOT_FOUND(10001, "公告不存在"),
 
     // 字典错误 11xxx
-    DICT_TYPE_NOT_FOUND(11001, "字典类型不存在");
+    DICT_TYPE_NOT_FOUND(11001, "字典类型不存在"),
+
+    // 地图服务错误 12xxx
+    AMAP_SERVICE_DISABLED(12001, "高德地图服务未启用"),
+    AMAP_SERVICE_ERROR(12002, "高德地图服务调用失败"),
+    MAP_ROUTE_CALC_FAILED(12003, "地图路线计算失败"),
+
+    // 用户管理错误 13xxx
+    CANNOT_DISABLE_SELF(13001, "不能禁用当前登录用户"),
+    CANNOT_DISABLE_LAST_ADMIN(13002, "不能禁用最后一个有效管理员"),
+    INVALID_USER_STATUS(13003, "用户状态值非法"),
+
+    // 文件上传错误 14xxx
+    FILE_EMPTY(14001, "上传文件不能为空"),
+    FILE_TOO_LARGE(14002, "文件大小超出限制"),
+    FILE_TYPE_NOT_ALLOWED(14003, "文件类型不允许"),
+    FILE_UPLOAD_FAILED(14004, "文件上传失败");
 
     private final Integer code;
     private final String message;

@@ -1,5 +1,6 @@
 package com.example.backend.controller.runner;
 
+import com.example.backend.annotation.AuditLogRecord;
 import com.example.backend.common.Result;
 import com.example.backend.dto.request.RunnerAuthApplyRequest;
 import com.example.backend.security.LoginUser;
@@ -45,6 +46,7 @@ public class RunnerAuthController {
      * @param request   认证申请请求（学校信息、证件类型、证件图片等）
      * @return 申请提交结果
      */
+    @AuditLogRecord(module = "AUTH", action = "APPLY", bizType = "AUTH", description = "提交认证申请")
     @PostMapping("/apply")
     public Result<String> apply(@AuthenticationPrincipal LoginUser loginUser,
                               @Valid @RequestBody RunnerAuthApplyRequest request) {

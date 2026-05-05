@@ -1,5 +1,6 @@
 package com.example.backend.controller.evaluation;
 
+import com.example.backend.annotation.AuditLogRecord;
 import com.example.backend.common.Result;
 import com.example.backend.dto.request.EvaluationSubmitRequest;
 import com.example.backend.security.LoginUser;
@@ -31,6 +32,7 @@ public class EvaluationController {
      * @param request the evaluation submission request
      * @return Result containing the evaluation ID
      */
+    @AuditLogRecord(module = "EVALUATION", action = "SUBMIT", bizType = "EVALUATION", description = "提交评价")
     @PostMapping
     public Result<Long> submitEvaluation(
             @AuthenticationPrincipal LoginUser loginUser,

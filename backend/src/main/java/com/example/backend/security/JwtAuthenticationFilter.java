@@ -44,8 +44,8 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                         .map(role -> new SimpleGrantedAuthority("ROLE_" + role))
                         .collect(Collectors.toList());
 
-                // 将用户ID和用户名存入Authentication
-                LoginUser loginUser = new LoginUser(userId, username, null, authorities);
+                // JWT认证不需要密码，但Spring Security User要求密码字段不能为null。
+                LoginUser loginUser = new LoginUser(userId, username, "", authorities);
 
                 UsernamePasswordAuthenticationToken authentication =
                         new UsernamePasswordAuthenticationToken(loginUser, null, authorities);

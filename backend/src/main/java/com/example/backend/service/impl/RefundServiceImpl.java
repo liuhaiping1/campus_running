@@ -144,7 +144,8 @@ public class RefundServiceImpl implements RefundService {
                         RefundStatusEnum.PENDING.getCode(), RefundStatusEnum.PROCESSING.getCode())
                 .set(RefundRecord::getRefundStatus, request.getRefundStatus())
                 .set(RefundRecord::getApproveAdminId, adminId)
-                .set(RefundRecord::getApproveResult, request.getApproveResult());
+                .set(RefundRecord::getApproveResult, request.getApproveResult())
+                .set(RefundRecord::getUpdateTime, LocalDateTime.now());
         if (refundTime != null) {
             wrapper.set(RefundRecord::getRefundTime, refundTime);
         }
@@ -179,9 +180,11 @@ public class RefundServiceImpl implements RefundService {
                     : PayStatusEnum.PARTIAL_REFUND.getCode();
             paymentOrder.setPayStatus(payStatus);
             errandOrder.setPayStatus(payStatus);
+            errandOrder.setUpdateTime(LocalDateTime.now());
             errandOrderMapper.updateById(errandOrder);
         }
 
+        paymentOrder.setUpdateTime(LocalDateTime.now());
         paymentOrderMapper.updateById(paymentOrder);
     }
 
@@ -205,6 +208,7 @@ public class RefundServiceImpl implements RefundService {
         return RefundRecordVO.builder()
                 .id(record.getId())
                 .orderId(record.getOrderId())
+                .payNo(record.getPayNo())
                 .refundNo(record.getRefundNo())
                 .applyUserId(record.getApplyUserId())
                 .refundType(record.getRefundType())

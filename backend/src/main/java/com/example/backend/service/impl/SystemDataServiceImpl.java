@@ -5,15 +5,18 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.example.backend.common.ErrorCode;
 import com.example.backend.common.enums.NoticeStatusEnum;
 import com.example.backend.common.exception.BusinessException;
+import com.example.backend.entity.CampusLocation;
 import com.example.backend.entity.ErrandCategory;
 import com.example.backend.entity.SysDictData;
 import com.example.backend.entity.SysDictType;
 import com.example.backend.entity.SystemNotice;
+import com.example.backend.mapper.CampusLocationMapper;
 import com.example.backend.mapper.ErrandCategoryMapper;
 import com.example.backend.mapper.SysDictDataMapper;
 import com.example.backend.mapper.SysDictTypeMapper;
 import com.example.backend.mapper.SystemNoticeMapper;
 import com.example.backend.service.SystemDataService;
+import com.example.backend.vo.CampusLocationVO;
 import com.example.backend.vo.CategoryVO;
 import com.example.backend.vo.DictDataVO;
 import com.example.backend.vo.NoticePageVO;
@@ -39,26 +42,30 @@ public class SystemDataServiceImpl implements SystemDataService {
     private final SysDictDataMapper sysDictDataMapper;
     private final SystemNoticeMapper systemNoticeMapper;
     private final ErrandCategoryMapper errandCategoryMapper;
+    private final CampusLocationMapper campusLocationMapper;
     private final ObjectMapper objectMapper;
 
     /**
      * 构造函数注入系统基础数据相关Mapper
      *
-     * @param sysDictTypeMapper    字典类型Mapper
-     * @param sysDictDataMapper    字典数据Mapper
-     * @param systemNoticeMapper   系统公告Mapper
-     * @param errandCategoryMapper 任务分类Mapper
-     * @param objectMapper         JSON处理器
+     * @param sysDictTypeMapper     字典类型Mapper
+     * @param sysDictDataMapper     字典数据Mapper
+     * @param systemNoticeMapper    系统公告Mapper
+     * @param errandCategoryMapper  任务分类Mapper
+     * @param campusLocationMapper  校园地点Mapper
+     * @param objectMapper          JSON处理器
      */
     public SystemDataServiceImpl(SysDictTypeMapper sysDictTypeMapper,
                                  SysDictDataMapper sysDictDataMapper,
                                  SystemNoticeMapper systemNoticeMapper,
                                  ErrandCategoryMapper errandCategoryMapper,
+                                 CampusLocationMapper campusLocationMapper,
                                  ObjectMapper objectMapper) {
         this.sysDictTypeMapper = sysDictTypeMapper;
         this.sysDictDataMapper = sysDictDataMapper;
         this.systemNoticeMapper = systemNoticeMapper;
         this.errandCategoryMapper = errandCategoryMapper;
+        this.campusLocationMapper = campusLocationMapper;
         this.objectMapper = objectMapper;
     }
 
@@ -124,6 +131,38 @@ public class SystemDataServiceImpl implements SystemDataService {
                 .orderByDesc(ErrandCategory::getCreateTime);
         return errandCategoryMapper.selectList(wrapper).stream()
                 .map(category -> CategoryVO.from(category, objectMapper))
+                .collect(Collectors.toList());
+    }
+
+    /**
+     * 查询启用状态的校园常用地点
+     *
+     * @param locationType 地点类型筛选，可为空
+     * @param keyword      关键词模糊搜索，可为空
+     * @return 校园地点列表，按排序号升序排列
+     */
+    @Override
+    public List<CampusLocationVO> listCampusLocations(Integer locationType, String keyword) {
+        LambdaQueryWrapper<CampusLocation> wrapper = new LambdaQueryWrapper<>();
+        wrapper.eq(CampusLocation::getLocationStatus, ENABLED);
+        if (locationType != null) {
+            wrapper.eq(CampusLocation::getLocationType, locationType);
+        }
+        // 关键词模糊匹配地点名称/校区/楼栋/详细地址
+        if (keyword != null && !keyword.trim().isEmpty()) {
+            String kw = keyword.trim();
+            wrapper.and(w -> w.like(CampusLocation::getLocationName, kw)
+                    .or()
+                    .like(CampusLocation::getCampusName, kw)
+                    .or()
+                    .like(CampusLocation::getBuildingName, kw)
+                    .or()
+                    .like(CampusLocation::getDetailAddress, kw));
+        }
+        wrapper.orderByAsc(CampusLocation::getSortNo)
+                .orderByAsc(CampusLocation::getId);
+        return campusLocationMapper.selectList(wrapper).stream()
+                .map(CampusLocationVO::from)
                 .collect(Collectors.toList());
     }
 }

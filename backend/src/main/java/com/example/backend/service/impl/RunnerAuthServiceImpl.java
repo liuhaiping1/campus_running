@@ -101,9 +101,11 @@ public class RunnerAuthServiceImpl implements RunnerAuthService {
 
         // 3a. 将用户所有当前生效的认证记录标记为历史
         LambdaUpdateWrapper<RunnerAuth> updateWrapper = new LambdaUpdateWrapper<>();
+        LocalDateTime now = LocalDateTime.now();
         updateWrapper.eq(RunnerAuth::getUserId, userId)
                 .eq(RunnerAuth::getCurrentFlag, 1)
-                .set(RunnerAuth::getCurrentFlag, 0);
+                .set(RunnerAuth::getCurrentFlag, 0)
+                .set(RunnerAuth::getUpdateTime, now);
         runnerAuthMapper.update(null, updateWrapper);
 
         // 3b. 生成认证批次号（UUID去除横线）
@@ -121,6 +123,8 @@ public class RunnerAuthServiceImpl implements RunnerAuthService {
         auth.setCertBackUrl(request.getCertBackUrl());
         auth.setAuthStatus(AuthStatusEnum.PENDING.getCode());
         auth.setCurrentFlag(1);
+        auth.setCreateTime(now);
+        auth.setUpdateTime(now);
 
         // 3d. 保存认证记录
         runnerAuthMapper.insert(auth);
@@ -160,8 +164,10 @@ public class RunnerAuthServiceImpl implements RunnerAuthService {
 
         // 3. 设置审核信息
         auth.setReviewAdminId(adminId);
-        auth.setReviewTime(LocalDateTime.now());
+        LocalDateTime now = LocalDateTime.now();
+        auth.setReviewTime(now);
         auth.setAuthStatus(request.getAuthStatus());
+        auth.setUpdateTime(now);
 
         // 4. 驳回时设置驳回原因
         if (AuthStatusEnum.REJECTED.getCode().equals(request.getAuthStatus())) {
@@ -212,8 +218,11 @@ public class RunnerAuthServiceImpl implements RunnerAuthService {
         userRole.setRoleId(runnerRole.getId());
         userRole.setRoleCode("RUNNER");
         userRole.setGrantSource(2);
-        userRole.setGrantTime(LocalDateTime.now());
+        LocalDateTime now = LocalDateTime.now();
+        userRole.setGrantTime(now);
         userRole.setRoleStatus(1);
+        userRole.setCreateTime(now);
+        userRole.setUpdateTime(now);
         sysUserRoleMapper.insert(userRole);
     }
 

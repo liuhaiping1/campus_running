@@ -20,6 +20,8 @@ public class MessageVO {
     private Integer messageLevel;
     private Integer isRead;
     private LocalDateTime sendTime;
+    /** 消息跳转地址 */
+    private String jumpUrl;
 
     /**
      * 根据站内消息实体构建响应对象
@@ -37,6 +39,7 @@ public class MessageVO {
                 .messageLevel(message.getMessageLevel())
                 .isRead(message.getIsRead())
                 .sendTime(message.getSendTime())
+                .jumpUrl(message.getJumpUrl())
                 .build();
     }
 }

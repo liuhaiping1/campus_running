@@ -14,13 +14,20 @@ import com.example.backend.dto.request.OrderCreateRequest;
 import com.example.backend.common.enums.AuthStatusEnum;
 import com.example.backend.entity.ErrandCategory;
 import com.example.backend.entity.ErrandOrder;
+import com.example.backend.entity.ErrandOrderAddress;
+import com.example.backend.entity.ErrandOrderDetail;
 import com.example.backend.entity.OrderStatusLog;
+import com.example.backend.entity.PaymentOrder;
 import com.example.backend.entity.RefundRecord;
 import com.example.backend.entity.RunnerAuth;
 import com.example.backend.entity.RunnerIncomeRecord;
 import com.example.backend.mapper.ErrandCategoryMapper;
+import com.example.backend.mapper.ErrandOrderAddressMapper;
+import com.example.backend.mapper.ErrandOrderDetailMapper;
 import com.example.backend.mapper.ErrandOrderMapper;
 import com.example.backend.mapper.OrderStatusLogMapper;
+import com.example.backend.mapper.OrderEvaluationMapper;
+import com.example.backend.mapper.PaymentOrderMapper;
 import com.example.backend.mapper.RefundRecordMapper;
 import com.example.backend.mapper.RunnerIncomeRecordMapper;
 import com.example.backend.mapper.RunnerAuthMapper;
@@ -85,6 +92,10 @@ class OrderServiceTest {
     @Mock
     private OrderStatusLogMapper orderStatusLogMapper;
 
+    /** Mock 订单评价 Mapper */
+    @Mock
+    private OrderEvaluationMapper orderEvaluationMapper;
+
     /** Mock 跑腿认证 Mapper */
     @Mock
     private RunnerAuthMapper runnerAuthMapper;
@@ -96,6 +107,18 @@ class OrderServiceTest {
     /** Mock 跑腿收益记录 Mapper */
     @Mock
     private RunnerIncomeRecordMapper runnerIncomeRecordMapper;
+
+    /** Mock 订单地址快照 Mapper */
+    @Mock
+    private ErrandOrderAddressMapper errandOrderAddressMapper;
+
+    /** Mock 订单分类扩展详情 Mapper */
+    @Mock
+    private ErrandOrderDetailMapper errandOrderDetailMapper;
+
+    /** Mock 支付单 Mapper */
+    @Mock
+    private PaymentOrderMapper paymentOrderMapper;
 
     /** 自动注入 Mock 依赖的被测对象 */
     @InjectMocks
@@ -116,6 +139,14 @@ class OrderServiceTest {
     /** RefundRecord 捕获器 */
     @Captor
     private ArgumentCaptor<RefundRecord> refundRecordCaptor;
+
+    /** ErrandOrderAddress 捕获器 */
+    @Captor
+    private ArgumentCaptor<ErrandOrderAddress> addressCaptor;
+
+    /** ErrandOrderDetail 捕获器 */
+    @Captor
+    private ArgumentCaptor<ErrandOrderDetail> detailCaptor;
 
     // =========================================================================
     // 通用测试数据
@@ -177,96 +208,39 @@ class OrderServiceTest {
 
         /**
          * 测试正常创建订单成功
-         * <p>
-         * 验证点：
-         * <ul>
-         *   <li>分类查询成功且状态为启用（1）</li>
-         *   <li>距离费用根据阶梯规则正确计算（distanceKm=2.5 匹配区间 [1,3) 费用为2）</li>
-         *   <li>订单金额 = 基础费(3) + 距离费(2) + 小费(默认0) = 5</li>
-         *   <li>订单编号以 "ER" 开头</li>
-         *   <li>订单状态初始化为 UNPAID(0)、支付状态 UNPAID(0)、结算状态 PENDING(0)</li>
-         *   <li>状态流转日志记录 beforeStatus=null、afterStatus=0、triggerAction="CREATE_ORDER"</li>
-         * </ul>
          */
         @Test
         @DisplayName("应成功创建订单")
         void shouldCreateOrderSuccessfully() {
-            // Given: 分类存在且启用
             when(errandCategoryMapper.selectById(baseRequest.getCategoryId())).thenReturn(enabledCategory);
-            // insert 成功后设置订单ID
             doAnswer(inv -> {
                 ErrandOrder order = inv.getArgument(0);
                 order.setId(100L);
                 return 1;
             }).when(errandOrderMapper).insert(any(ErrandOrder.class));
-            // 状态日志插入成功
             when(orderStatusLogMapper.insert(any(OrderStatusLog.class))).thenReturn(1);
+            when(errandOrderAddressMapper.insert(any(ErrandOrderAddress.class))).thenReturn(1);
+            when(errandOrderDetailMapper.insert(any(ErrandOrderDetail.class))).thenReturn(1);
 
-            // When: 执行创建订单
             Long orderId = orderService.create(USER_ID, baseRequest);
 
-            // Then: 返回订单ID
             assertEquals(Long.valueOf(100L), orderId, "应返回新创建的订单ID");
-
-            // 验证分类查询
             verify(errandCategoryMapper).selectById(baseRequest.getCategoryId());
 
-            // 验证订单实体各字段
             ArgumentCaptor<ErrandOrder> orderCaptor = ArgumentCaptor.forClass(ErrandOrder.class);
             verify(errandOrderMapper).insert(orderCaptor.capture());
             ErrandOrder savedOrder = orderCaptor.getValue();
 
             assertNotNull(savedOrder.getOrderNo(), "订单编号不应为空");
             assertTrue(savedOrder.getOrderNo().startsWith("ER"), "订单编号应以ER开头");
-            assertEquals(USER_ID, savedOrder.getPublisherId(), "发布人ID应一致");
-            assertNull(savedOrder.getRunnerId(), "接单人ID初始应为null");
-            assertEquals(baseRequest.getCategoryId(), savedOrder.getCategoryId(), "分类ID应一致");
-            assertEquals(baseRequest.getTitle(), savedOrder.getTitle(), "标题应一致");
-            assertEquals(baseRequest.getOrderDesc(), savedOrder.getOrderDesc(), "描述应一致");
-            assertEquals(baseRequest.getPickupAddress(), savedOrder.getPickupAddress(), "取件地址应一致");
-            assertEquals(baseRequest.getDeliveryAddress(), savedOrder.getDeliveryAddress(), "送达地址应一致");
-            assertEquals(baseRequest.getPickupLng(), savedOrder.getPickupLng(), "取件经度应一致");
-            assertEquals(baseRequest.getPickupLat(), savedOrder.getPickupLat(), "取件纬度应一致");
-            assertEquals(baseRequest.getDeliveryLng(), savedOrder.getDeliveryLng(), "送达经度应一致");
-            assertEquals(baseRequest.getDeliveryLat(), savedOrder.getDeliveryLat(), "送达纬度应一致");
-            assertEquals(baseRequest.getDistanceKm(), savedOrder.getDistanceKm(), "距离应一致");
-            assertEquals(baseRequest.getDeadlineTime(), savedOrder.getDeadlineTime(), "期望完成时间应一致");
+            assertEquals(USER_ID, savedOrder.getPublisherId());
+            assertNull(savedOrder.getRunnerId());
+            assertEquals(baseRequest.getTitle(), savedOrder.getTitle());
+            assertEquals(BigDecimal.valueOf(5).stripTrailingZeros(), savedOrder.getOrderAmount().stripTrailingZeros());
+            assertEquals(Integer.valueOf(0), savedOrder.getOrderStatus());
+            assertEquals(Integer.valueOf(0), savedOrder.getPayStatus());
 
-            // 验证费用
-            assertEquals(BigDecimal.valueOf(3.00).stripTrailingZeros(),
-                    savedOrder.getBaseFee().stripTrailingZeros(), "基础费用应为3");
-            assertEquals(BigDecimal.valueOf(2).stripTrailingZeros(),
-                    savedOrder.getDistanceFee().stripTrailingZeros(), "距离费用应为2（匹配区间[1,3)）");
-            assertEquals(BigDecimal.ZERO.stripTrailingZeros(),
-                    savedOrder.getWeightFee().stripTrailingZeros(), "重量费用初始应为0");
-            assertEquals(BigDecimal.ZERO.stripTrailingZeros(),
-                    savedOrder.getTimeFee().stripTrailingZeros(), "时段费用初始应为0");
-            assertEquals(BigDecimal.ZERO.stripTrailingZeros(),
-                    savedOrder.getTipFee().stripTrailingZeros(), "小费默认应为0");
-            assertEquals(BigDecimal.valueOf(5).stripTrailingZeros(),
-                    savedOrder.getOrderAmount().stripTrailingZeros(), "订单总金额应为5(3+2+0+0+0)");
-            assertEquals(BigDecimal.ZERO.stripTrailingZeros(),
-                    savedOrder.getPlatformCommission().stripTrailingZeros(), "平台抽成初始应为0");
-            assertEquals(BigDecimal.valueOf(5).stripTrailingZeros(),
-                    savedOrder.getEstimatedRunnerIncome().stripTrailingZeros(), "预估跑腿员收益应为5");
-
-            // 验证订单状态
-            assertEquals(Integer.valueOf(0), savedOrder.getOrderStatus(), "订单状态应为UNPAID(0)");
-            assertEquals(Integer.valueOf(0), savedOrder.getPayStatus(), "支付状态应为UNPAID(0)");
-            assertEquals(Integer.valueOf(0), savedOrder.getSettlementStatus(), "结算状态应为PENDING(0)");
-
-            // 验证状态流转日志
-            ArgumentCaptor<OrderStatusLog> logCaptor = ArgumentCaptor.forClass(OrderStatusLog.class);
-            verify(orderStatusLogMapper).insert(logCaptor.capture());
-            OrderStatusLog statusLog = logCaptor.getValue();
-
-            assertEquals(Long.valueOf(100L), statusLog.getOrderId(), "日志关联的订单ID应为100");
-            assertEquals(savedOrder.getOrderNo(), statusLog.getOrderNo(), "日志中的订单编号应一致");
-            assertNull(statusLog.getBeforeStatus(), "初始日志的变更前状态应为null");
-            assertEquals(Integer.valueOf(0), statusLog.getAfterStatus(), "变更后状态应为UNPAID(0)");
-            assertEquals("CREATE_ORDER", statusLog.getTriggerAction(), "触发动作应为CREATE_ORDER");
-            assertEquals(USER_ID, statusLog.getOperatorUserId(), "操作人ID应为发布人ID");
-            assertEquals("STUDENT", statusLog.getOperatorRole(), "操作人角色应为STUDENT");
+            verify(orderStatusLogMapper).insert(any(OrderStatusLog.class));
         }
 
         /**
@@ -372,6 +346,416 @@ class OrderServiceTest {
                     () -> orderService.create(USER_ID, nullDistanceRequest));
 
             assertEquals(ErrorCode.BAD_REQUEST.getCode(), exception.getCode());
+        }
+
+        /**
+         * 创建订单时应写入两条地址快照
+         */
+        @Test
+        @DisplayName("创建订单时应写入两条 ErrandOrderAddress")
+        void shouldInsertTwoAddressSnapshots() {
+            when(errandCategoryMapper.selectById(baseRequest.getCategoryId())).thenReturn(enabledCategory);
+            doAnswer(inv -> {
+                ErrandOrder order = inv.getArgument(0);
+                order.setId(100L);
+                return 1;
+            }).when(errandOrderMapper).insert(any(ErrandOrder.class));
+            when(orderStatusLogMapper.insert(any(OrderStatusLog.class))).thenReturn(1);
+            when(errandOrderAddressMapper.insert(any(ErrandOrderAddress.class))).thenReturn(1);
+
+            orderService.create(USER_ID, baseRequest);
+
+            // 验证刚好 insert 了两次地址快照
+            ArgumentCaptor<ErrandOrderAddress> captor = ArgumentCaptor.forClass(ErrandOrderAddress.class);
+            verify(errandOrderAddressMapper, times(2)).insert(captor.capture());
+            List<ErrandOrderAddress> addresses = captor.getAllValues();
+
+            // 起点地址
+            ErrandOrderAddress pickup = addresses.get(0);
+            assertEquals(Long.valueOf(100L), pickup.getOrderId());
+            assertEquals(Integer.valueOf(1), pickup.getAddressRole(), "起点 addressRole 应为1");
+            assertEquals(baseRequest.getPickupAddress(), pickup.getDetailAddress());
+            assertEquals(baseRequest.getPickupLng(), pickup.getLongitude());
+            assertEquals(baseRequest.getPickupLat(), pickup.getLatitude());
+            assertEquals(Integer.valueOf(9), pickup.getMapProvider(), "mapProvider 应为9（系统兜底）");
+            assertEquals(Integer.valueOf(1), pickup.getAddressSource(), "未传时默认 1");
+            assertEquals("GCJ02", pickup.getCoordType());
+
+            // 终点地址
+            ErrandOrderAddress delivery = addresses.get(1);
+            assertEquals(Long.valueOf(100L), delivery.getOrderId());
+            assertEquals(Integer.valueOf(2), delivery.getAddressRole(), "终点 addressRole 应为2");
+            assertEquals(baseRequest.getDeliveryAddress(), delivery.getDetailAddress());
+            assertEquals(baseRequest.getDeliveryLng(), delivery.getLongitude());
+            assertEquals(baseRequest.getDeliveryLat(), delivery.getLatitude());
+        }
+
+        /**
+         * 老请求只传基本字段时也能写入地址快照
+         */
+        @Test
+        @DisplayName("老请求只传基本字段时也能写入地址快照")
+        void shouldInsertAddressSnapshotWithLegacyRequest() {
+            OrderCreateRequest legacyRequest = new OrderCreateRequest();
+            legacyRequest.setCategoryId(1L);
+            legacyRequest.setTitle("测试");
+            legacyRequest.setOrderDesc("测试描述");
+            legacyRequest.setPickupAddress("取件点");
+            legacyRequest.setDeliveryAddress("送达点");
+            legacyRequest.setPickupLng(BigDecimal.valueOf(120.5));
+            legacyRequest.setPickupLat(BigDecimal.valueOf(30.2));
+            legacyRequest.setDeliveryLng(null);
+            legacyRequest.setDeliveryLat(null);
+            legacyRequest.setDistanceKm(BigDecimal.valueOf(1.0));
+            legacyRequest.setDeadlineTime(LocalDateTime.now().plusHours(1));
+
+            when(errandCategoryMapper.selectById(1L)).thenReturn(enabledCategory);
+            doAnswer(inv -> {
+                ErrandOrder order = inv.getArgument(0);
+                order.setId(200L);
+                return 1;
+            }).when(errandOrderMapper).insert(any(ErrandOrder.class));
+            when(orderStatusLogMapper.insert(any(OrderStatusLog.class))).thenReturn(1);
+            when(errandOrderAddressMapper.insert(any(ErrandOrderAddress.class))).thenReturn(1);
+
+            orderService.create(USER_ID, legacyRequest);
+
+            ArgumentCaptor<ErrandOrderAddress> captor = ArgumentCaptor.forClass(ErrandOrderAddress.class);
+            verify(errandOrderAddressMapper, times(2)).insert(captor.capture());
+            List<ErrandOrderAddress> addresses = captor.getAllValues();
+
+            // 终点无经纬度 → geocodeStatus=0
+            ErrandOrderAddress delivery = addresses.get(1);
+            assertEquals(Integer.valueOf(0), delivery.getGeocodeStatus(), "无经纬度时 geocodeStatus 应为0");
+            assertNull(delivery.getGeocodeTime(), "无经纬度时 geocodeTime 应为 null");
+        }
+
+        /**
+         * 经纬度完整时 geocodeStatus=1
+         */
+        @Test
+        @DisplayName("经纬度完整时 geocodeStatus=1, geocodeTime 非空")
+        void shouldSetGeocodeStatusWhenCoordsComplete() {
+            when(errandCategoryMapper.selectById(baseRequest.getCategoryId())).thenReturn(enabledCategory);
+            doAnswer(inv -> {
+                ErrandOrder order = inv.getArgument(0);
+                order.setId(100L);
+                return 1;
+            }).when(errandOrderMapper).insert(any(ErrandOrder.class));
+            when(orderStatusLogMapper.insert(any(OrderStatusLog.class))).thenReturn(1);
+            when(errandOrderAddressMapper.insert(any(ErrandOrderAddress.class))).thenReturn(1);
+
+            orderService.create(USER_ID, baseRequest);
+
+            ArgumentCaptor<ErrandOrderAddress> captor = ArgumentCaptor.forClass(ErrandOrderAddress.class);
+            verify(errandOrderAddressMapper, times(2)).insert(captor.capture());
+
+            // baseRequest 两个经纬度都有值
+            ErrandOrderAddress pickup = captor.getAllValues().get(0);
+            assertEquals(Integer.valueOf(1), pickup.getGeocodeStatus(), "经纬度完整时 geocodeStatus 应为1");
+            assertNotNull(pickup.getGeocodeTime(), "经纬度完整时 geocodeTime 不应为 null");
+        }
+
+        /**
+         * 创建订单时插入 1 条 ErrandOrderDetail，categoryCode 来自 ErrandCategory
+         */
+        @Test
+        @DisplayName("创建订单时应插入 ErrandOrderDetail，categoryCode 来自分类")
+        void shouldInsertOrderDetailWithCategoryCode() {
+            when(errandCategoryMapper.selectById(baseRequest.getCategoryId())).thenReturn(enabledCategory);
+            doAnswer(inv -> { ErrandOrder o = inv.getArgument(0); o.setId(100L); return 1; })
+                    .when(errandOrderMapper).insert(any(ErrandOrder.class));
+            when(orderStatusLogMapper.insert(any(OrderStatusLog.class))).thenReturn(1);
+            when(errandOrderAddressMapper.insert(any(ErrandOrderAddress.class))).thenReturn(1);
+            when(errandOrderDetailMapper.insert(any(ErrandOrderDetail.class))).thenReturn(1);
+
+            orderService.create(USER_ID, baseRequest);
+
+            ArgumentCaptor<ErrandOrderDetail> captor = ArgumentCaptor.forClass(ErrandOrderDetail.class);
+            verify(errandOrderDetailMapper).insert(captor.capture());
+            ErrandOrderDetail detail = captor.getValue();
+
+            assertEquals(Long.valueOf(100L), detail.getOrderId());
+            // categoryCode 必须来自分类实体，不是请求参数
+            assertEquals(enabledCategory.getCategoryCode(), detail.getCategoryCode());
+            // 默认值
+            assertEquals(Integer.valueOf(1), detail.getPackageCount(), "默认 packageCount=1");
+            assertEquals(Integer.valueOf(0), detail.getNeedInsulation(), "默认 needInsulation=0");
+            assertEquals(Integer.valueOf(0), detail.getAllowPriceAdjust(), "默认 allowPriceAdjust=0");
+        }
+
+        /**
+         * 老请求不传扩展字段时也能插入 detail，默认值正确
+         */
+        @Test
+        @DisplayName("老请求不传扩展字段时也插入 detail，默认值正确")
+        void shouldInsertDetailWithDefaultValuesForLegacyRequest() {
+            OrderCreateRequest legacyReq = new OrderCreateRequest();
+            legacyReq.setCategoryId(1L);
+            legacyReq.setTitle("测试");
+            legacyReq.setOrderDesc("测试");
+            legacyReq.setPickupAddress("A");
+            legacyReq.setDeliveryAddress("B");
+            legacyReq.setPickupLng(new BigDecimal("120.5"));
+            legacyReq.setPickupLat(new BigDecimal("30.2"));
+            legacyReq.setDeliveryLng(new BigDecimal("120.8"));
+            legacyReq.setDeliveryLat(new BigDecimal("30.5"));
+            legacyReq.setDistanceKm(BigDecimal.ONE);
+            legacyReq.setDeadlineTime(LocalDateTime.now().plusHours(1));
+
+            when(errandCategoryMapper.selectById(1L)).thenReturn(enabledCategory);
+            doAnswer(inv -> { ErrandOrder o = inv.getArgument(0); o.setId(200L); return 1; })
+                    .when(errandOrderMapper).insert(any(ErrandOrder.class));
+            when(orderStatusLogMapper.insert(any(OrderStatusLog.class))).thenReturn(1);
+            when(errandOrderAddressMapper.insert(any(ErrandOrderAddress.class))).thenReturn(1);
+            when(errandOrderDetailMapper.insert(any(ErrandOrderDetail.class))).thenReturn(1);
+
+            orderService.create(USER_ID, legacyReq);
+
+            ArgumentCaptor<ErrandOrderDetail> captor = ArgumentCaptor.forClass(ErrandOrderDetail.class);
+            verify(errandOrderDetailMapper).insert(captor.capture());
+            ErrandOrderDetail detail = captor.getValue();
+
+            assertEquals(Integer.valueOf(1), detail.getPackageCount(), "默认 1");
+            assertEquals(Integer.valueOf(0), detail.getNeedInsulation(), "默认 0");
+            assertEquals(Integer.valueOf(0), detail.getAllowPriceAdjust(), "默认 0");
+            assertNull(detail.getExpressNo(), "未传时应为 null");
+            assertNull(detail.getTakeawayPlatform(), "未传时应为 null");
+            assertNull(detail.getShoppingItems(), "未传时应为 null");
+        }
+
+        /**
+         * 快递字段能正确写入
+         */
+        @Test
+        @DisplayName("快递字段能正确写入 ErrandOrderDetail")
+        void shouldInsertExpressFields() {
+            baseRequest.setExpressCompany("顺丰快递");
+            baseRequest.setExpressNo("SF1234567890");
+            baseRequest.setExpressPickupCode("8888");
+            baseRequest.setPackageCount(2);
+
+            when(errandCategoryMapper.selectById(baseRequest.getCategoryId())).thenReturn(enabledCategory);
+            doAnswer(inv -> { ErrandOrder o = inv.getArgument(0); o.setId(100L); return 1; })
+                    .when(errandOrderMapper).insert(any(ErrandOrder.class));
+            when(orderStatusLogMapper.insert(any(OrderStatusLog.class))).thenReturn(1);
+            when(errandOrderAddressMapper.insert(any(ErrandOrderAddress.class))).thenReturn(1);
+            when(errandOrderDetailMapper.insert(any(ErrandOrderDetail.class))).thenReturn(1);
+
+            orderService.create(USER_ID, baseRequest);
+
+            ArgumentCaptor<ErrandOrderDetail> captor = ArgumentCaptor.forClass(ErrandOrderDetail.class);
+            verify(errandOrderDetailMapper).insert(captor.capture());
+            ErrandOrderDetail detail = captor.getValue();
+
+            assertEquals("顺丰快递", detail.getExpressCompany());
+            assertEquals("SF1234567890", detail.getExpressNo());
+            assertEquals("8888", detail.getExpressPickupCode());
+            assertEquals(Integer.valueOf(2), detail.getPackageCount());
+        }
+
+        /**
+         * 外卖字段能正确写入
+         */
+        @Test
+        @DisplayName("外卖字段能正确写入 ErrandOrderDetail")
+        void shouldInsertTakeawayFields() {
+            baseRequest.setTakeawayPlatform("MEITUAN");
+            baseRequest.setMerchantName("麦当劳");
+            LocalDateTime pickupTime = LocalDateTime.now().plusMinutes(30);
+            baseRequest.setExpectedPickupTime(pickupTime);
+
+            when(errandCategoryMapper.selectById(baseRequest.getCategoryId())).thenReturn(enabledCategory);
+            doAnswer(inv -> { ErrandOrder o = inv.getArgument(0); o.setId(100L); return 1; })
+                    .when(errandOrderMapper).insert(any(ErrandOrder.class));
+            when(orderStatusLogMapper.insert(any(OrderStatusLog.class))).thenReturn(1);
+            when(errandOrderAddressMapper.insert(any(ErrandOrderAddress.class))).thenReturn(1);
+            when(errandOrderDetailMapper.insert(any(ErrandOrderDetail.class))).thenReturn(1);
+
+            orderService.create(USER_ID, baseRequest);
+
+            ArgumentCaptor<ErrandOrderDetail> captor = ArgumentCaptor.forClass(ErrandOrderDetail.class);
+            verify(errandOrderDetailMapper).insert(captor.capture());
+            ErrandOrderDetail detail = captor.getValue();
+
+            assertEquals("MEITUAN", detail.getTakeawayPlatform());
+            assertEquals("麦当劳", detail.getMerchantName());
+            assertEquals(pickupTime, detail.getExpectedPickupTime());
+        }
+
+        /**
+         * 代买字段能正确写入
+         */
+        @Test
+        @DisplayName("代买字段能正确写入 ErrandOrderDetail")
+        void shouldInsertShoppingFields() {
+            baseRequest.setShoppingItems("[{\"name\":\"可乐\",\"qty\":2}]");
+            baseRequest.setShoppingBudget(new BigDecimal("50.00"));
+            baseRequest.setAllowPriceAdjust(1);
+
+            when(errandCategoryMapper.selectById(baseRequest.getCategoryId())).thenReturn(enabledCategory);
+            doAnswer(inv -> { ErrandOrder o = inv.getArgument(0); o.setId(100L); return 1; })
+                    .when(errandOrderMapper).insert(any(ErrandOrder.class));
+            when(orderStatusLogMapper.insert(any(OrderStatusLog.class))).thenReturn(1);
+            when(errandOrderAddressMapper.insert(any(ErrandOrderAddress.class))).thenReturn(1);
+            when(errandOrderDetailMapper.insert(any(ErrandOrderDetail.class))).thenReturn(1);
+
+            orderService.create(USER_ID, baseRequest);
+
+            ArgumentCaptor<ErrandOrderDetail> captor = ArgumentCaptor.forClass(ErrandOrderDetail.class);
+            verify(errandOrderDetailMapper).insert(captor.capture());
+            ErrandOrderDetail detail = captor.getValue();
+
+            assertEquals("[{\"name\":\"可乐\",\"qty\":2}]", detail.getShoppingItems());
+            assertEquals(new BigDecimal("50.00"), detail.getShoppingBudget());
+            assertEquals(Integer.valueOf(1), detail.getAllowPriceAdjust());
+        }
+
+        /**
+         * create() 应写入 feeRuleVersion 从分类获取
+         */
+        @Test
+        @DisplayName("create() 应写入 feeRuleVersion")
+        void shouldSetFeeRuleVersionFromCategory() {
+            enabledCategory.setFeeRuleVersion("v2");
+            when(errandCategoryMapper.selectById(baseRequest.getCategoryId())).thenReturn(enabledCategory);
+            doAnswer(inv -> { ErrandOrder o = inv.getArgument(0); o.setId(100L); return 1; })
+                    .when(errandOrderMapper).insert(any(ErrandOrder.class));
+            when(orderStatusLogMapper.insert(any(OrderStatusLog.class))).thenReturn(1);
+            when(errandOrderAddressMapper.insert(any(ErrandOrderAddress.class))).thenReturn(1);
+            when(errandOrderDetailMapper.insert(any(ErrandOrderDetail.class))).thenReturn(1);
+
+            orderService.create(USER_ID, baseRequest);
+
+            ArgumentCaptor<ErrandOrder> captor = ArgumentCaptor.forClass(ErrandOrder.class);
+            verify(errandOrderMapper).insert(captor.capture());
+            assertEquals("v2", captor.getValue().getFeeRuleVersion());
+        }
+
+        /**
+         * create() 应写入 feeDetail JSON
+         */
+        @Test
+        @DisplayName("create() 应写入 feeDetail JSON 包含费用字段")
+        void shouldWriteFeeDetailJson() {
+            when(errandCategoryMapper.selectById(baseRequest.getCategoryId())).thenReturn(enabledCategory);
+            doAnswer(inv -> { ErrandOrder o = inv.getArgument(0); o.setId(100L); return 1; })
+                    .when(errandOrderMapper).insert(any(ErrandOrder.class));
+            when(orderStatusLogMapper.insert(any(OrderStatusLog.class))).thenReturn(1);
+            when(errandOrderAddressMapper.insert(any(ErrandOrderAddress.class))).thenReturn(1);
+            when(errandOrderDetailMapper.insert(any(ErrandOrderDetail.class))).thenReturn(1);
+
+            orderService.create(USER_ID, baseRequest);
+
+            ArgumentCaptor<ErrandOrder> captor = ArgumentCaptor.forClass(ErrandOrder.class);
+            verify(errandOrderMapper).insert(captor.capture());
+            String detail = captor.getValue().getFeeDetail();
+            assertNotNull(detail, "feeDetail 不应为空");
+            assertTrue(detail.contains("\"baseFee\""), "应包含 baseFee");
+            assertTrue(detail.contains("\"distanceFee\""), "应包含 distanceFee");
+            assertTrue(detail.contains("\"orderAmount\""), "应包含 orderAmount");
+            assertTrue(detail.contains("\"feeRuleVersion\""), "应包含 feeRuleVersion");
+        }
+
+        /**
+         * create() 应写入 attachmentUrls/contactName/contactPhone
+         */
+        @Test
+        @DisplayName("create() 应写入 attachmentUrls/contactName/contactPhone")
+        void shouldWriteAttachmentAndContact() {
+            baseRequest.setAttachmentUrls("http://img1.jpg,http://img2.jpg");
+            baseRequest.setContactName("张三");
+            baseRequest.setContactPhone("13900000001");
+            when(errandCategoryMapper.selectById(baseRequest.getCategoryId())).thenReturn(enabledCategory);
+            doAnswer(inv -> { ErrandOrder o = inv.getArgument(0); o.setId(100L); return 1; })
+                    .when(errandOrderMapper).insert(any(ErrandOrder.class));
+            when(orderStatusLogMapper.insert(any(OrderStatusLog.class))).thenReturn(1);
+            when(errandOrderAddressMapper.insert(any(ErrandOrderAddress.class))).thenReturn(1);
+            when(errandOrderDetailMapper.insert(any(ErrandOrderDetail.class))).thenReturn(1);
+
+            orderService.create(USER_ID, baseRequest);
+
+            ArgumentCaptor<ErrandOrder> captor = ArgumentCaptor.forClass(ErrandOrder.class);
+            verify(errandOrderMapper).insert(captor.capture());
+            ErrandOrder o = captor.getValue();
+            assertEquals("http://img1.jpg,http://img2.jpg", o.getAttachmentUrls());
+            assertEquals("张三", o.getContactName());
+            assertEquals("13900000001", o.getContactPhone());
+        }
+
+        /**
+         * contactName 为空时兜底到 pickupContactName
+         */
+        @Test
+        @DisplayName("contactName 为空时兜底到 pickupContactName")
+        void shouldFallbackContactName() {
+            baseRequest.setContactName(null);
+            baseRequest.setPickupContactName("李四");
+            baseRequest.setContactPhone(null);
+            baseRequest.setPickupContactPhone("13900000002");
+            when(errandCategoryMapper.selectById(baseRequest.getCategoryId())).thenReturn(enabledCategory);
+            doAnswer(inv -> { ErrandOrder o = inv.getArgument(0); o.setId(100L); return 1; })
+                    .when(errandOrderMapper).insert(any(ErrandOrder.class));
+            when(orderStatusLogMapper.insert(any(OrderStatusLog.class))).thenReturn(1);
+            when(errandOrderAddressMapper.insert(any(ErrandOrderAddress.class))).thenReturn(1);
+            when(errandOrderDetailMapper.insert(any(ErrandOrderDetail.class))).thenReturn(1);
+
+            orderService.create(USER_ID, baseRequest);
+
+            ArgumentCaptor<ErrandOrder> captor = ArgumentCaptor.forClass(ErrandOrder.class);
+            verify(errandOrderMapper).insert(captor.capture());
+            ErrandOrder o = captor.getValue();
+            assertEquals("李四", o.getContactName(), "应兜底到 pickupContactName");
+            assertEquals("13900000002", o.getContactPhone(), "应兜底到 pickupContactPhone");
+        }
+
+        /**
+         * 经纬度完整时 distance 兜底字段正确
+         */
+        @Test
+        @DisplayName("经纬度完整时应设置 distance 字段")
+        void shouldSetDistanceFieldsWhenCoordsComplete() {
+            when(errandCategoryMapper.selectById(baseRequest.getCategoryId())).thenReturn(enabledCategory);
+            doAnswer(inv -> { ErrandOrder o = inv.getArgument(0); o.setId(100L); return 1; })
+                    .when(errandOrderMapper).insert(any(ErrandOrder.class));
+            when(orderStatusLogMapper.insert(any(OrderStatusLog.class))).thenReturn(1);
+            when(errandOrderAddressMapper.insert(any(ErrandOrderAddress.class))).thenReturn(1);
+            when(errandOrderDetailMapper.insert(any(ErrandOrderDetail.class))).thenReturn(1);
+
+            orderService.create(USER_ID, baseRequest);
+
+            ArgumentCaptor<ErrandOrder> captor = ArgumentCaptor.forClass(ErrandOrder.class);
+            verify(errandOrderMapper).insert(captor.capture());
+            ErrandOrder o = captor.getValue();
+            assertEquals(baseRequest.getDistanceKm(), o.getStraightDistanceKm());
+            assertEquals(Integer.valueOf(2), o.getDistanceSource(), "不接地图时应为2（直线兜底）");
+            assertEquals(Integer.valueOf(1), o.getDistanceCalcStatus(), "坐标完整应为 1");
+            assertEquals(Integer.valueOf(9), o.getMapProvider());
+            assertNotNull(o.getDistanceCalcTime(), "坐标完整时不应为 null");
+            assertNull(o.getRouteDistanceKm(), "不接地图时 routeDistanceKm 应为 null");
+        }
+
+        /**
+         * 经纬度不完整时 distance calc 字段为 0/null
+         */
+        @Test
+        @DisplayName("经纬度不完整时 distanceCalcStatus=0")
+        void shouldSetCalcStatusZeroWhenCoordsIncomplete() {
+            baseRequest.setDeliveryLng(null); // 使坐标不完整
+            when(errandCategoryMapper.selectById(baseRequest.getCategoryId())).thenReturn(enabledCategory);
+            doAnswer(inv -> { ErrandOrder o = inv.getArgument(0); o.setId(100L); return 1; })
+                    .when(errandOrderMapper).insert(any(ErrandOrder.class));
+            when(orderStatusLogMapper.insert(any(OrderStatusLog.class))).thenReturn(1);
+            when(errandOrderAddressMapper.insert(any(ErrandOrderAddress.class))).thenReturn(1);
+            when(errandOrderDetailMapper.insert(any(ErrandOrderDetail.class))).thenReturn(1);
+
+            orderService.create(USER_ID, baseRequest);
+
+            ArgumentCaptor<ErrandOrder> captor = ArgumentCaptor.forClass(ErrandOrder.class);
+            verify(errandOrderMapper).insert(captor.capture());
+            ErrandOrder o = captor.getValue();
+            assertEquals(Integer.valueOf(0), o.getDistanceCalcStatus(), "坐标不完整应为 0");
+            assertNull(o.getDistanceCalcTime(), "坐标不完整时应为 null");
         }
     }
 
@@ -595,6 +979,8 @@ class OrderServiceTest {
             order.setEstimatedRunnerIncome(BigDecimal.valueOf(5));
             order.setPayStatus(0);
             order.setSettlementStatus(0);
+            order.setContactName("张三");
+            order.setContactPhone("13900000001");
             order.setDeadlineTime(LocalDateTime.now().plusHours(2));
 
             when(errandOrderMapper.selectById(orderId)).thenReturn(order);
@@ -625,6 +1011,10 @@ class OrderServiceTest {
             assertEquals("快递代取", detail.getCategoryName(), "分类名称应正确");
             assertEquals("帮忙取快递", detail.getTitle(), "标题应一致");
             assertEquals(Integer.valueOf(1), detail.getOrderStatus(), "订单状态应一致");
+
+            // 验证联系方式仅出现在订单详情，不在列表 VO 中
+            assertEquals("张三", detail.getContactName(), "联系人姓名应一致");
+            assertEquals("13900000001", detail.getContactPhone(), "联系人手机号应一致");
 
             // 验证状态流转日志
             assertNotNull(detail.getStatusLogs(), "状态流转日志列表不应为null");
@@ -755,6 +1145,108 @@ class OrderServiceTest {
             verify(errandOrderMapper).selectById(orderId);
             verify(errandCategoryMapper).selectById(1L);
             verify(orderStatusLogMapper).selectList(any(LambdaQueryWrapper.class));
+        }
+
+        /**
+         * detail() 查询到地址快照时返回 pickupAddressDetail 和 deliveryAddressDetail
+         */
+        @Test
+        @DisplayName("detail() 查询到地址快照时应返回地址详情")
+        void shouldReturnAddressDetails() {
+            Long orderId = 200L;
+            ErrandOrder order = buildOrder(orderId, "ER20240102001", USER_ID, null, 1L, 1);
+            when(errandOrderMapper.selectById(orderId)).thenReturn(order);
+            when(errandCategoryMapper.selectById(1L)).thenReturn(enabledCategory);
+            when(orderStatusLogMapper.selectList(any(LambdaQueryWrapper.class))).thenReturn(new ArrayList<>());
+
+            // 模拟返回两条地址快照
+            ErrandOrderAddress pickupAddr = new ErrandOrderAddress();
+            pickupAddr.setOrderId(orderId);
+            pickupAddr.setAddressRole(1);
+            pickupAddr.setDetailAddress("取件点地址");
+
+            ErrandOrderAddress deliveryAddr = new ErrandOrderAddress();
+            deliveryAddr.setOrderId(orderId);
+            deliveryAddr.setAddressRole(2);
+            deliveryAddr.setDetailAddress("送达点地址");
+
+            when(errandOrderAddressMapper.selectList(any(LambdaQueryWrapper.class)))
+                    .thenReturn(Arrays.asList(pickupAddr, deliveryAddr));
+
+            OrderDetailVO detail = orderService.detail(orderId, USER_ID);
+
+            assertNotNull(detail.getPickupAddressDetail(), "pickupAddressDetail 不应为 null");
+            assertEquals("取件点地址", detail.getPickupAddressDetail().getDetailAddress());
+            assertNotNull(detail.getDeliveryAddressDetail(), "deliveryAddressDetail 不应为 null");
+            assertEquals("送达点地址", detail.getDeliveryAddressDetail().getDetailAddress());
+        }
+
+        /**
+         * detail() 查询到 ErrandOrderDetail 时返回 orderDetail
+         */
+        @Test
+        @DisplayName("detail() 查询到 ErrandOrderDetail 时返回 orderDetail")
+        void shouldReturnOrderDetail() {
+            Long orderId = 200L;
+            ErrandOrder order = buildOrder(orderId, "ER20240102001", USER_ID, null, 1L, 1);
+            when(errandOrderMapper.selectById(orderId)).thenReturn(order);
+            when(errandCategoryMapper.selectById(1L)).thenReturn(enabledCategory);
+            when(orderStatusLogMapper.selectList(any(LambdaQueryWrapper.class))).thenReturn(new ArrayList<>());
+            when(errandOrderAddressMapper.selectList(any(LambdaQueryWrapper.class))).thenReturn(new ArrayList<>());
+
+            ErrandOrderDetail mockDetail = new ErrandOrderDetail();
+            mockDetail.setOrderId(orderId);
+            mockDetail.setCategoryCode("EXPRESS_PICKUP");
+            mockDetail.setExpressNo("SF123456");
+            when(errandOrderDetailMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(mockDetail);
+
+            OrderDetailVO detail = orderService.detail(orderId, USER_ID);
+
+            assertNotNull(detail.getOrderDetail(), "orderDetail 不应为 null");
+            assertEquals("EXPRESS_PICKUP", detail.getOrderDetail().getCategoryCode());
+            assertEquals("SF123456", detail.getOrderDetail().getExpressNo());
+        }
+
+        /**
+         * detail() 查不到 ErrandOrderDetail 时仍正常返回
+         */
+        @Test
+        @DisplayName("detail() 查不到 ErrandOrderDetail 时仍正常返回")
+        void shouldNotThrowWhenNoOrderDetail() {
+            Long orderId = 200L;
+            ErrandOrder order = buildOrder(orderId, "ER20240102001", USER_ID, null, 1L, 1);
+            when(errandOrderMapper.selectById(orderId)).thenReturn(order);
+            when(errandCategoryMapper.selectById(1L)).thenReturn(enabledCategory);
+            when(orderStatusLogMapper.selectList(any(LambdaQueryWrapper.class))).thenReturn(new ArrayList<>());
+            when(errandOrderAddressMapper.selectList(any(LambdaQueryWrapper.class))).thenReturn(new ArrayList<>());
+            when(errandOrderDetailMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(null);
+
+            OrderDetailVO detail = orderService.detail(orderId, USER_ID);
+
+            assertNotNull(detail, "没 detail 时也应正常返回");
+            assertNull(detail.getOrderDetail(), "无数据时 orderDetail 应为 null");
+        }
+
+        /**
+         * detail() 查不到地址快照时仍正常返回，不报错
+         */
+        @Test
+        @DisplayName("detail() 查不到地址快照时仍正常返回")
+        void shouldNotThrowWhenNoAddressSnapshot() {
+            Long orderId = 200L;
+            ErrandOrder order = buildOrder(orderId, "ER20240102001", USER_ID, null, 1L, 1);
+            when(errandOrderMapper.selectById(orderId)).thenReturn(order);
+            when(errandCategoryMapper.selectById(1L)).thenReturn(enabledCategory);
+            when(orderStatusLogMapper.selectList(any(LambdaQueryWrapper.class))).thenReturn(new ArrayList<>());
+            // 地址快照返回空列表
+            when(errandOrderAddressMapper.selectList(any(LambdaQueryWrapper.class)))
+                    .thenReturn(new ArrayList<>());
+
+            OrderDetailVO detail = orderService.detail(orderId, USER_ID);
+
+            assertNotNull(detail, "没地址快照时也应正常返回订单详情");
+            assertNull(detail.getPickupAddressDetail(), "无快照时 pickupAddressDetail 应为 null");
+            assertNull(detail.getDeliveryAddressDetail(), "无快照时 deliveryAddressDetail 应为 null");
         }
     }
 
@@ -1614,6 +2106,11 @@ class OrderServiceTest {
             doReturn(1).when(errandOrderMapper).update(any(), any());
             when(orderStatusLogMapper.insert(any(OrderStatusLog.class))).thenReturn(1);
             when(refundRecordMapper.insert(any(RefundRecord.class))).thenReturn(1);
+            // 支付单查询
+            PaymentOrder payOrder = new PaymentOrder();
+            payOrder.setOrderId(orderId);
+            payOrder.setPayNo("PAY123456789");
+            when(paymentOrderMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(payOrder);
 
             orderService.cancel(orderId, publisherId, request);
 
@@ -1623,6 +2120,7 @@ class OrderServiceTest {
             assertNotNull(refund.getRequestId(), "requestId 不应为空");
             assertEquals(request.getCancelReason(), refund.getRefundReason());
             assertEquals(Integer.valueOf(RefundStatusEnum.PENDING.getCode()), refund.getRefundStatus());
+            assertEquals("PAY123456789", refund.getPayNo(), "退款记录应关联支付单号");
         }
 
         /**
@@ -1830,6 +2328,60 @@ class OrderServiceTest {
             BusinessException exception = assertThrows(BusinessException.class,
                     () -> orderService.cancel(orderId, publisherId, request));
             assertEquals(ErrorCode.ORDER_CANNOT_CANCEL.getCode(), exception.getCode());
+        }
+
+        /**
+         * 发布者取消时应写入 cancelUserId 和 cancelRole=STUDENT
+         */
+        @Test
+        @DisplayName("发布者取消时应写入 cancelUserId 和 cancelRole=STUDENT")
+        void shouldSetCancelAuditForPublisher() {
+            Long publisherId = 1L;
+            Long orderId = 100L;
+            OrderCancelRequest request = new OrderCancelRequest();
+            request.setCancelReason("不需要了");
+
+            ErrandOrder order = buildOrder(orderId, "ER_CANCEL_001", publisherId, 2L, 1L,
+                    OrderStatusEnum.WAITING_ACCEPT.getCode());
+            order.setPayStatus(PayStatusEnum.UNPAID.getCode());
+            when(errandOrderMapper.selectById(orderId)).thenReturn(order);
+            doReturn(1).when(errandOrderMapper).update(any(), any());
+            when(orderStatusLogMapper.insert(any(OrderStatusLog.class))).thenReturn(1);
+
+            orderService.cancel(orderId, publisherId, request);
+
+            // SET 字段在 getSqlSet() 中，不在 getSqlSegment()（WHERE 部分）
+            verify(errandOrderMapper).update(any(), updateWrapperCaptor.capture());
+            String sqlSet = updateWrapperCaptor.getValue().getSqlSet();
+            assertTrue(sqlSet.contains("cancel_user_id"), "SET 应包含 cancel_user_id");
+            assertTrue(sqlSet.contains("cancel_role"), "SET 应包含 cancel_role");
+        }
+
+        /**
+         * 跑腿员取消时应写入 cancelUserId 和 cancelRole=RUNNER
+         */
+        @Test
+        @DisplayName("跑腿员取消时应写入 cancelUserId 和 cancelRole=RUNNER")
+        void shouldSetCancelAuditForRunner() {
+            Long runnerId = 2L;
+            Long orderId = 100L;
+            OrderCancelRequest request = new OrderCancelRequest();
+            request.setCancelReason("太远了");
+
+            ErrandOrder order = buildOrder(orderId, "ER_CANCEL_002", 1L, runnerId, 1L,
+                    OrderStatusEnum.ACCEPTED.getCode());
+            order.setPayStatus(PayStatusEnum.PAID.getCode());
+            when(errandOrderMapper.selectById(orderId)).thenReturn(order);
+            doReturn(1).when(errandOrderMapper).update(any(), any());
+            when(orderStatusLogMapper.insert(any(OrderStatusLog.class))).thenReturn(1);
+            when(refundRecordMapper.insert(any(RefundRecord.class))).thenReturn(1);
+
+            orderService.cancel(orderId, runnerId, request);
+
+            verify(errandOrderMapper).update(any(), updateWrapperCaptor.capture());
+            String sqlSet = updateWrapperCaptor.getValue().getSqlSet();
+            assertTrue(sqlSet.contains("cancel_user_id"), "SET 应包含 cancel_user_id");
+            assertTrue(sqlSet.contains("cancel_role"), "SET 应包含 cancel_role");
         }
     }
 

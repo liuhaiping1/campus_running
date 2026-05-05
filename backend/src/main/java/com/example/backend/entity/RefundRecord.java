@@ -16,6 +16,11 @@ public class RefundRecord implements Serializable {
 
     private Long orderId;
 
+    /**
+     * 关联支付单号快照
+     */
+    private String payNo;
+
     private String refundNo;
 
     private Long applyUserId;

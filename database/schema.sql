@@ -470,12 +470,14 @@ CREATE TABLE system_notice (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='系统公告表';
 
 -- Seed data
--- Password is a placeholder BCrypt hash for demonstration only. Replace before production use.
+-- 初始账号密码：admin/admin123, student/student123, runner/runner123
 INSERT INTO sys_user (
   id, username, password, real_name, nick_name, phone, gender, user_status,
   create_time, update_time, create_by, update_by, is_deleted
 ) VALUES
-  (1000000000000000001, 'admin', '$2a$10$7EqJtq98hPqEX7fNZaFWoOhiI3e4KcW1xg6QbgJzzc9EoRjQ7xS6G', '系统管理员', '管理员', '18800000000', 0, 1, NOW(), NOW(), 0, 0, 0);
+  (1000000000000000001, 'admin', '$2b$10$TteXdT/eC7uLCSi/Si1TM.8P2zOEWtWLHQNOLgx1wzmnyeYF6jnUS', '系统管理员', '管理员', '18800000000', 0, 1, NOW(), NOW(), 0, 0, 0),
+  (1000000000000000002, 'student', '$2b$10$0T4I2dKkRZ.Qlo8BQ4icKODrhLrdKm8hbvANt57FCqdlT/oc0bs3O', '测试学生', '学生小明', '13900000001', 0, 1, NOW(), NOW(), 0, 0, 0),
+  (1000000000000000003, 'runner', '$2b$10$fPApJnM4pJdXgj30Iu4Zku64.Kb52uxdZO60ZGM0wWV2oJIyvUKR.', '测试跑腿员', '跑腿小李', '13900000002', 0, 1, NOW(), NOW(), 0, 0, 0);
 
 INSERT INTO sys_role (
   id, role_code, role_name, role_status, remark, create_time, update_time, create_by, update_by, is_deleted
@@ -494,7 +496,11 @@ INSERT INTO sys_dict_type (
   (2005, 'appeal_status', '申诉状态', 1, '申诉处理状态', NOW(), NOW(), 0, 0, 0),
   (2006, 'refund_status', '退款状态', 1, '退款记录处理状态', NOW(), NOW(), 0, 0, 0),
   (2007, 'notice_status', '公告状态', 1, '系统公告发布状态', NOW(), NOW(), 0, 0, 0),
-  (2008, 'role_code', '角色编码', 1, '系统角色编码', NOW(), NOW(), 0, 0, 0);
+  (2008, 'role_code', '角色编码', 1, '系统角色编码', NOW(), NOW(), 0, 0, 0),
+  (2009, 'notice_type', '公告类型', 1, '系统公告分类', NOW(), NOW(), 0, 0, 0),
+  (2010, 'category_status', '分类状态', 1, '跑腿任务分类启用/禁用', NOW(), NOW(), 0, 0, 0),
+  (2011, 'message_read_status', '消息读取状态', 1, '站内消息已读/未读', NOW(), NOW(), 0, 0, 0),
+  (2012, 'audit_success', '审计结果', 1, '审计日志操作成功/失败', NOW(), NOW(), 0, 0, 0);
 
 INSERT INTO sys_dict_data (
   id, dict_type, dict_value, dict_label, sort_no, css_class, data_status, remark,
@@ -540,13 +546,24 @@ INSERT INTO sys_dict_data (
   (2703, 'notice_status', '2', '已下架', 2, 'info', 1, NULL, NOW(), NOW(), 0, 0, 0),
   (2801, 'role_code', 'STUDENT', '学生用户', 1, 'primary', 1, NULL, NOW(), NOW(), 0, 0, 0),
   (2802, 'role_code', 'RUNNER', '校园跑腿员', 2, 'success', 1, NULL, NOW(), NOW(), 0, 0, 0),
-  (2803, 'role_code', 'ADMIN', '系统管理员', 3, 'danger', 1, NULL, NOW(), NOW(), 0, 0, 0);
+  (2803, 'role_code', 'ADMIN', '系统管理员', 3, 'danger', 1, NULL, NOW(), NOW(), 0, 0, 0),
+  (2901, 'notice_type', '1', '普通', 1, '', 1, NULL, NOW(), NOW(), 0, 0, 0),
+  (2902, 'notice_type', '2', '重要', 2, 'warning', 1, NULL, NOW(), NOW(), 0, 0, 0),
+  (2903, 'notice_type', '3', '维护', 3, 'danger', 1, NULL, NOW(), NOW(), 0, 0, 0),
+  (3001, 'category_status', '0', '禁用', 0, 'info', 1, NULL, NOW(), NOW(), 0, 0, 0),
+  (3002, 'category_status', '1', '启用', 1, 'success', 1, NULL, NOW(), NOW(), 0, 0, 0),
+  (3101, 'message_read_status', '0', '未读', 0, 'danger', 1, NULL, NOW(), NOW(), 0, 0, 0),
+  (3102, 'message_read_status', '1', '已读', 1, 'info', 1, NULL, NOW(), NOW(), 0, 0, 0),
+  (3201, 'audit_success', 'true', '成功', 1, 'success', 1, NULL, NOW(), NOW(), 0, 0, 0),
+  (3202, 'audit_success', 'false', '失败', 2, 'danger', 1, NULL, NOW(), NOW(), 0, 0, 0);
 
 INSERT INTO sys_user_role (
   id, user_id, role_id, role_code, grant_source, grant_time, expire_time, role_status,
   create_time, update_time, create_by, update_by, is_deleted
 ) VALUES
-  (1000000000000000101, 1000000000000000001, 3, 'ADMIN', 3, NOW(), NULL, 1, NOW(), NOW(), 0, 0, 0);
+  (1000000000000000101, 1000000000000000001, 3, 'ADMIN', 3, NOW(), NULL, 1, NOW(), NOW(), 0, 0, 0),
+  (1000000000000000102, 1000000000000000002, 1, 'STUDENT', 1, NOW(), NULL, 1, NOW(), NOW(), 0, 0, 0),
+  (1000000000000000103, 1000000000000000003, 2, 'RUNNER', 2, NOW(), NULL, 1, NOW(), NOW(), 0, 0, 0);
 
 INSERT INTO errand_category (
   id, category_name, category_code, base_fee, distance_fee_rule, urgent_fee,

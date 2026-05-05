@@ -1,6 +1,7 @@
 package com.example.backend.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.example.backend.common.ErrorCode;
@@ -15,6 +16,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -121,6 +123,7 @@ public class AdminCategoryServiceImpl implements AdminCategoryService {
             validateTimeFeeRuleJson(request.getTimeFeeRule());
         }
 
+        LocalDateTime now = LocalDateTime.now();
         ErrandCategory category = new ErrandCategory();
         category.setCategoryName(request.getCategoryName());
         category.setCategoryCode(request.getCategoryCode());
@@ -134,6 +137,8 @@ public class AdminCategoryServiceImpl implements AdminCategoryService {
                 request.getFeeRuleVersion() != null ? request.getFeeRuleVersion() : DEFAULT_FEE_RULE_VERSION);
         category.setSortNo(request.getSortNo() != null ? request.getSortNo() : 0);
         category.setCategoryStatus(request.getCategoryStatus() != null ? request.getCategoryStatus() : ENABLED);
+        category.setCreateTime(now);
+        category.setUpdateTime(now);
 
         errandCategoryMapper.insert(category);
         return CategoryVO.from(category, objectMapper);
@@ -182,6 +187,7 @@ public class AdminCategoryServiceImpl implements AdminCategoryService {
                 request.getFeeRuleVersion() != null ? request.getFeeRuleVersion() : DEFAULT_FEE_RULE_VERSION);
         category.setSortNo(request.getSortNo() != null ? request.getSortNo() : 0);
         category.setCategoryStatus(request.getCategoryStatus() != null ? request.getCategoryStatus() : ENABLED);
+        category.setUpdateTime(LocalDateTime.now());
 
         errandCategoryMapper.updateById(category);
         return CategoryVO.from(category, objectMapper);
@@ -190,8 +196,8 @@ public class AdminCategoryServiceImpl implements AdminCategoryService {
     /**
      * 逻辑删除任务分类
      * <p>
-     * MyBatis-Plus 的 deleteById 会通过 {@code @TableLogic} 将 isDeleted 置为1。
-     * 删除前校验分类是否存在。不做级联删除。
+     * 显式将 isDeleted 置为1，避免 deleteById 在部分配置下退化为物理删除。
+     * 删除前校验分类是否存在，不做级联删除。
      * </p>
      *
      * @param id 分类ID
@@ -204,8 +210,13 @@ public class AdminCategoryServiceImpl implements AdminCategoryService {
             throw new BusinessException(ErrorCode.CATEGORY_NOT_FOUND);
         }
 
-        // MyBatis-Plus @TableLogic 会将此操作转为逻辑删除
-        errandCategoryMapper.deleteById(id);
+        // 显式逻辑删除，避免物理删除触发订单分类外键约束
+        UpdateWrapper<ErrandCategory> wrapper = new UpdateWrapper<>();
+        wrapper.eq("id", id)
+                .eq("is_deleted", 0)
+                .set("is_deleted", 1)
+                .set("update_time", LocalDateTime.now());
+        errandCategoryMapper.update(null, wrapper);
     }
 
     /**

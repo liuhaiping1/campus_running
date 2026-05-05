@@ -1,0 +1,47 @@
+/* 响应式工具类，移动端断点 <= 768px */
+
+/* PC 端显示，移动端隐藏 */
+.pc-only {
+  display: block;
+}
+
+.mobile-only {
+  display: none;
+}
+
+@media (max-width: 768px) {
+  .pc-only {
+    display: none !important;
+  }
+
+  .mobile-only {
+    display: block !important;
+  }
+
+  /* 移动端全宽 */
+  .mobile-full-width {
+    width: 100% !important;
+  }
+
+  /* 移动端隐藏 */
+  .mobile-hidden {
+    display: none !important;
+  }
+
+  /* 移动端文字居中 */
+  .mobile-text-center {
+    text-align: center !important;
+  }
+
+  /* 移动端单列布局 */
+  .responsive-grid {
+    grid-template-columns: 1fr !important;
+  }
+}
+
+/* PC 端网格 */
+.responsive-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: var(--spacing-md);
+}

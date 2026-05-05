@@ -60,6 +60,9 @@ public class AuditLogVO {
     /** 创建时间 */
     private LocalDateTime createTime;
 
+    /** 接口耗时，单位毫秒 */
+    private Long costTime;
+
     /**
      * 根据审计日志实体构建视图对象
      *
@@ -82,6 +85,7 @@ public class AuditLogVO {
                 .success(isSuccess)
                 .errorMessage(isSuccess ? null : log.getResultMsg())
                 .createTime(log.getCreateTime())
+                .costTime(log.getCostTime())
                 .build();
     }
 }

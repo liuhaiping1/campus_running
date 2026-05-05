@@ -1,5 +1,6 @@
 package com.example.backend.service;
 
+import com.example.backend.vo.CampusLocationVO;
 import com.example.backend.vo.CategoryVO;
 import com.example.backend.vo.DictDataVO;
 import com.example.backend.vo.NoticePageVO;
@@ -9,7 +10,7 @@ import java.util.List;
 /**
  * 系统基础数据服务接口
  * <p>
- * 提供字典、公告和任务分类等前台基础数据查询能力。
+ * 提供字典、公告、任务分类和校园地点等前台基础数据查询能力。
  * </p>
  */
 public interface SystemDataService {
@@ -38,4 +39,13 @@ public interface SystemDataService {
      * @return 分类列表
      */
     List<CategoryVO> listCategories();
+
+    /**
+     * 查询启用状态的校园常用地点
+     *
+     * @param locationType 地点类型筛选，可为空
+     * @param keyword      关键词模糊搜索（地点名称/校区/楼栋/详细地址），可为空
+     * @return 校园地点列表，按排序号升序排列
+     */
+    List<CampusLocationVO> listCampusLocations(Integer locationType, String keyword);
 }

@@ -1,6 +1,7 @@
 package com.example.backend.controller.order;
 
 import com.baomidou.mybatisplus.core.metadata.IPage;
+import com.example.backend.annotation.AuditLogRecord;
 import com.example.backend.common.Result;
 import com.example.backend.dto.request.OrderCancelRequest;
 import com.example.backend.dto.request.OrderCreateRequest;
@@ -41,6 +42,7 @@ public class OrderController {
      * @param request   订单创建请求
      * @return 新订单ID
      */
+    @AuditLogRecord(module = "ORDER", action = "CREATE", bizType = "ORDER", description = "创建订单")
     @PostMapping
     public Result<Long> create(@AuthenticationPrincipal LoginUser loginUser,
                                @Valid @RequestBody OrderCreateRequest request) {
@@ -104,6 +106,7 @@ public class OrderController {
      * @param loginUser 当前登录用户（跑腿员）
      * @return 操作结果
      */
+    @AuditLogRecord(module = "ORDER", action = "ACCEPT", bizType = "ORDER", description = "接单")
     @PostMapping("/{id}/accept")
     public Result<Void> accept(@PathVariable Long id,
                                @AuthenticationPrincipal LoginUser loginUser) {
@@ -117,6 +120,7 @@ public class OrderController {
      * @param loginUser 当前登录用户（跑腿员）
      * @return 操作结果
      */
+    @AuditLogRecord(module = "ORDER", action = "CONTACT", bizType = "ORDER", description = "联系发布人")
     @PostMapping("/{id}/contact")
     public Result<Void> contact(@PathVariable Long id,
                                 @AuthenticationPrincipal LoginUser loginUser) {
@@ -130,6 +134,7 @@ public class OrderController {
      * @param loginUser 当前登录用户（跑腿员）
      * @return 操作结果
      */
+    @AuditLogRecord(module = "ORDER", action = "PICKUP", bizType = "ORDER", description = "取件")
     @PostMapping("/{id}/pickup")
     public Result<Void> pickup(@PathVariable Long id,
                                @AuthenticationPrincipal LoginUser loginUser) {
@@ -143,6 +148,7 @@ public class OrderController {
      * @param loginUser 当前登录用户（跑腿员）
      * @return 操作结果
      */
+    @AuditLogRecord(module = "ORDER", action = "DELIVER", bizType = "ORDER", description = "送达")
     @PostMapping("/{id}/deliver")
     public Result<Void> deliver(@PathVariable Long id,
                                 @AuthenticationPrincipal LoginUser loginUser) {
@@ -156,6 +162,7 @@ public class OrderController {
      * @param loginUser 当前登录用户（发布人）
      * @return 操作结果
      */
+    @AuditLogRecord(module = "ORDER", action = "COMPLETE", bizType = "ORDER", description = "确认完成")
     @PostMapping("/{id}/complete")
     public Result<Void> complete(@PathVariable Long id,
                                  @AuthenticationPrincipal LoginUser loginUser) {
@@ -170,6 +177,7 @@ public class OrderController {
      * @param request   取消请求
      * @return 操作结果
      */
+    @AuditLogRecord(module = "ORDER", action = "CANCEL", bizType = "ORDER", description = "取消订单")
     @PostMapping("/{id}/cancel")
     public Result<Void> cancel(@PathVariable Long id,
                                @AuthenticationPrincipal LoginUser loginUser,

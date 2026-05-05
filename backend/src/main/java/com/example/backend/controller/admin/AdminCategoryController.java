@@ -1,6 +1,7 @@
 package com.example.backend.controller.admin;
 
 import com.baomidou.mybatisplus.core.metadata.IPage;
+import com.example.backend.annotation.AuditLogRecord;
 import com.example.backend.common.Result;
 import com.example.backend.dto.request.CategorySaveRequest;
 import com.example.backend.service.AdminCategoryService;
@@ -69,6 +70,7 @@ public class AdminCategoryController {
      * @param request 分类保存请求
      * @return 新增后的分类视图对象
      */
+    @AuditLogRecord(module = "CATEGORY", action = "CREATE", bizType = "CATEGORY", description = "新增分类")
     @PostMapping
     public Result<CategoryVO> create(@Valid @RequestBody CategorySaveRequest request) {
         CategoryVO vo = adminCategoryService.create(request);
@@ -85,6 +87,7 @@ public class AdminCategoryController {
      * @param request 分类保存请求
      * @return 修改后的分类视图对象
      */
+    @AuditLogRecord(module = "CATEGORY", action = "UPDATE", bizType = "CATEGORY", description = "修改分类")
     @PutMapping("/{id}")
     public Result<CategoryVO> update(@PathVariable Long id,
                                      @Valid @RequestBody CategorySaveRequest request) {
@@ -101,6 +104,7 @@ public class AdminCategoryController {
      * @param id 分类ID
      * @return 操作结果
      */
+    @AuditLogRecord(module = "CATEGORY", action = "DELETE", bizType = "CATEGORY", description = "删除分类")
     @DeleteMapping("/{id}")
     public Result<Void> delete(@PathVariable Long id) {
         adminCategoryService.delete(id);

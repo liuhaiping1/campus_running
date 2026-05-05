@@ -17,6 +17,8 @@ import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDateTime;
+
 /**
  * 订单评价服务实现类
  */
@@ -62,6 +64,7 @@ public class EvaluationServiceImpl implements EvaluationService {
             throw new BusinessException(ErrorCode.EVALUATION_ALREADY_EXISTS);
         }
 
+        LocalDateTime now = LocalDateTime.now();
         OrderEvaluation evaluation = new OrderEvaluation();
         evaluation.setOrderId(request.getOrderId());
         evaluation.setPublisherId(userId);
@@ -69,6 +72,8 @@ public class EvaluationServiceImpl implements EvaluationService {
         evaluation.setStarScore(request.getScore());
         evaluation.setContent(request.getContent());
         evaluation.setIsAnonymous(0);
+        evaluation.setCreateTime(now);
+        evaluation.setUpdateTime(now);
         try {
             orderEvaluationMapper.insert(evaluation);
         } catch (DuplicateKeyException e) {
@@ -83,6 +88,8 @@ public class EvaluationServiceImpl implements EvaluationService {
         statusLog.setTriggerAction("EVALUATE_ORDER");
         statusLog.setOperatorUserId(userId);
         statusLog.setOperatorRole("STUDENT");
+        statusLog.setCreateTime(now);
+        statusLog.setUpdateTime(now);
         orderStatusLogMapper.insert(statusLog);
 
         return evaluation.getId();

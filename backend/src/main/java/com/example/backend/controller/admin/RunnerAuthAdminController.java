@@ -1,6 +1,7 @@
 package com.example.backend.controller.admin;
 
 import com.baomidou.mybatisplus.core.metadata.IPage;
+import com.example.backend.annotation.AuditLogRecord;
 import com.example.backend.common.Result;
 import com.example.backend.dto.request.RunnerAuthReviewRequest;
 import com.example.backend.security.LoginUser;
@@ -49,6 +50,7 @@ public class RunnerAuthAdminController {
      * @param request   审核请求（审核结果、驳回原因）
      * @return 审核结果
      */
+    @AuditLogRecord(module = "AUTH", action = "REVIEW", bizType = "AUTH", description = "审核跑腿员认证")
     @PostMapping("/{id}/review")
     public Result<String> review(@PathVariable Long id,
                                @AuthenticationPrincipal LoginUser loginUser,

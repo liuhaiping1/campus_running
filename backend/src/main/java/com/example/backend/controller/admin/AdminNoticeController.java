@@ -1,5 +1,6 @@
 package com.example.backend.controller.admin;
 
+import com.example.backend.annotation.AuditLogRecord;
 import com.example.backend.common.Result;
 import com.example.backend.dto.request.NoticeSaveRequest;
 import com.example.backend.dto.request.NoticeStatusRequest;
@@ -74,6 +75,7 @@ public class AdminNoticeController {
      * @param request   公告保存请求
      * @return 新增后的公告
      */
+    @AuditLogRecord(module = "NOTICE", action = "CREATE", bizType = "NOTICE", description = "新增公告")
     @PostMapping
     public Result<NoticeVO> create(@AuthenticationPrincipal LoginUser loginUser,
                                    @Valid @RequestBody NoticeSaveRequest request) {
@@ -92,6 +94,7 @@ public class AdminNoticeController {
      * @param request 公告保存请求
      * @return 修改后的公告
      */
+    @AuditLogRecord(module = "NOTICE", action = "UPDATE", bizType = "NOTICE", description = "修改公告")
     @PutMapping("/{id}")
     public Result<NoticeVO> update(@PathVariable Long id,
                                    @Valid @RequestBody NoticeSaveRequest request) {
@@ -110,6 +113,7 @@ public class AdminNoticeController {
      * @param request 状态变更请求
      * @return 变更后的公告
      */
+    @AuditLogRecord(module = "NOTICE", action = "PUBLISH", bizType = "NOTICE", description = "变更公告状态")
     @PostMapping("/{id}/status")
     public Result<NoticeVO> updateStatus(@PathVariable Long id,
                                          @Valid @RequestBody NoticeStatusRequest request) {

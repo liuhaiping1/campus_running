@@ -7,14 +7,17 @@ import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.example.backend.common.ErrorCode;
 import com.example.backend.common.exception.BusinessException;
 import com.example.backend.dto.request.AddressSaveRequest;
+import com.example.backend.entity.CampusLocation;
 import com.example.backend.entity.StationMessage;
 import com.example.backend.entity.UserAddress;
+import com.example.backend.mapper.CampusLocationMapper;
 import com.example.backend.mapper.ErrandCategoryMapper;
 import com.example.backend.mapper.StationMessageMapper;
 import com.example.backend.mapper.SysDictDataMapper;
 import com.example.backend.mapper.SysDictTypeMapper;
 import com.example.backend.mapper.SystemNoticeMapper;
 import com.example.backend.mapper.UserAddressMapper;
+import com.example.backend.vo.CampusLocationVO;
 import com.example.backend.service.impl.AddressServiceImpl;
 import com.example.backend.service.impl.MessageServiceImpl;
 import com.example.backend.service.impl.SystemDataServiceImpl;
@@ -67,6 +70,9 @@ class StageTwoServiceTest {
 
     @Mock
     private ErrandCategoryMapper errandCategoryMapper;
+
+    @Mock
+    private CampusLocationMapper campusLocationMapper;
 
     @InjectMocks
     private AddressServiceImpl addressService;
@@ -187,6 +193,106 @@ class StageTwoServiceTest {
 
         assertEquals(ErrorCode.DICT_TYPE_NOT_FOUND.getCode(), ex.getCode());
         verify(sysDictDataMapper, never()).selectList(any(LambdaQueryWrapper.class));
+    }
+
+    // =========================================================================
+    // 校园地点查询测试
+    // =========================================================================
+
+    @Test
+    @DisplayName("无筛选时应返回所有启用地点列表")
+    void shouldReturnAllEnabledLocations() {
+        CampusLocation loc1 = buildCampusLocation(1L, "菜鸟驿站", 1);
+        CampusLocation loc2 = buildCampusLocation(2L, "一食堂外卖点", 2);
+        when(campusLocationMapper.selectList(any(LambdaQueryWrapper.class)))
+                .thenReturn(java.util.Arrays.asList(loc1, loc2));
+
+        java.util.List<CampusLocationVO> result = systemDataService.listCampusLocations(null, null);
+
+        assertEquals(2, result.size());
+        assertEquals("菜鸟驿站", result.get(0).getLocationName());
+        verify(campusLocationMapper).selectList(any(LambdaQueryWrapper.class));
+    }
+
+    @Test
+    @DisplayName("locationType 应精确筛选")
+    void shouldFilterByLocationType() {
+        CampusLocation loc = buildCampusLocation(1L, "菜鸟驿站", 1);
+        when(campusLocationMapper.selectList(any(LambdaQueryWrapper.class)))
+                .thenReturn(java.util.Collections.singletonList(loc));
+
+        java.util.List<CampusLocationVO> result = systemDataService.listCampusLocations(1, null);
+
+        assertEquals(1, result.size());
+        assertEquals(Integer.valueOf(1), result.get(0).getLocationType());
+    }
+
+    @Test
+    @DisplayName("keyword 应模糊匹配地点名称和校区")
+    void shouldFilterByKeyword() {
+        CampusLocation loc = buildCampusLocation(1L, "校内超市", 3);
+        when(campusLocationMapper.selectList(any(LambdaQueryWrapper.class)))
+                .thenReturn(java.util.Collections.singletonList(loc));
+
+        java.util.List<CampusLocationVO> result = systemDataService.listCampusLocations(null, "超市");
+
+        assertEquals(1, result.size());
+        assertEquals("校内超市", result.get(0).getLocationName());
+    }
+
+    @Test
+    @DisplayName("空结果应返回空列表")
+    void shouldReturnEmptyListForNoMatch() {
+        when(campusLocationMapper.selectList(any(LambdaQueryWrapper.class)))
+                .thenReturn(java.util.Collections.emptyList());
+
+        java.util.List<CampusLocationVO> result = systemDataService.listCampusLocations(99, "不存在的");
+
+        assertEquals(0, result.size());
+    }
+
+    @Test
+    @DisplayName("VO.from() 字段映射正确，不包含审计字段")
+    void shouldMapVoCorrectly() {
+        CampusLocation entity = new CampusLocation();
+        entity.setId(1L);
+        entity.setLocationName("菜鸟驿站");
+        entity.setAmapPoiId("POI123");
+        entity.setAmapAdcode("330100");
+        entity.setAmapCityCode("0571");
+        entity.setLocationType(1);
+        entity.setCampusName("默认校区");
+        entity.setBuildingName("菜鸟驿站");
+        entity.setDetailAddress("默认校区菜鸟驿站");
+        entity.setLongitude(new java.math.BigDecimal("120.123456"));
+        entity.setLatitude(new java.math.BigDecimal("30.234567"));
+        entity.setCoordType("GCJ02");
+        entity.setSortNo(1);
+        entity.setCreateTime(java.time.LocalDateTime.now());
+        entity.setCreateBy(1L);
+
+        CampusLocationVO vo = CampusLocationVO.from(entity);
+
+        assertEquals(Long.valueOf(1L), vo.getId());
+        assertEquals("菜鸟驿站", vo.getLocationName());
+        assertEquals("POI123", vo.getAmapPoiId());
+        assertEquals(new java.math.BigDecimal("120.123456"), vo.getLongitude());
+        assertEquals("GCJ02", vo.getCoordType());
+    }
+
+    /** 构建测试用校园地点 */
+    private CampusLocation buildCampusLocation(Long id, String name, Integer type) {
+        CampusLocation loc = new CampusLocation();
+        loc.setId(id);
+        loc.setLocationName(name);
+        loc.setLocationType(type);
+        loc.setCampusName("默认校区");
+        loc.setBuildingName(name);
+        loc.setDetailAddress("默认校区" + name);
+        loc.setLocationStatus(1);
+        loc.setSortNo(type);
+        loc.setCoordType("GCJ02");
+        return loc;
     }
 
     private AddressSaveRequest sampleAddressRequest(Integer isDefault) {
